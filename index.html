@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DLOSy20 - Web Synthesizer</title>
+    <meta
+      name="description"
+      content="Hardware-like web synthesizer with step sequencer, VCO loop, and drawing mode waveform generation."
+    />
+    <link rel="stylesheet" href="styles/main.css" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div id="synth-app">
+      <!-- ===== HEADER ===== -->
+      <header id="synth-header">
+        <div class="logo">DLOSy<span class="model">20</span></div>
+        <div class="header-controls">
+          <div class="transport-group">
+            <button id="btn-play" class="transport-btn" aria-label="Play/Stop">
+              <span class="play-icon">▶</span>
+            </button>
+            <div class="tempo-display">
+              <span class="label">BPM</span>
+              <span id="tempo-value" class="value">120</span>
+            </div>
+          </div>
+          <div class="master-vol-group">
+            <span class="label">MASTER</span>
+            <div
+              id="knob-master-vol"
+              class="knob"
+              data-param="masterVol"
+              data-min="0"
+              data-max="1"
+              data-value="0.7"
+            ></div>
+          </div>
+        </div>
+      </header>
+
+      <!-- ===== MAIN PANEL ===== -->
+      <main id="synth-main">
+        <!-- --- LEFT: Synth Controls --- -->
+        <section id="panel-synth" class="panel">
+          <div class="panel-title">SYNTH</div>
+
+          <!-- Waveform Select -->
+          <div class="control-row">
+            <div class="wave-select-group">
+              <span class="label">WAVE</span>
+              <div class="wave-buttons">
+                <button class="wave-btn active" data-wave="sine">SIN</button>
+                <button class="wave-btn" data-wave="triangle">TRI</button>
+                <button class="wave-btn" data-wave="square">SQR</button>
+                <button class="wave-btn" data-wave="sawtooth">SAW</button>
+                <button class="wave-btn drawing-btn" data-wave="drawing">
+                  DRAW
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Knobs Row: Cutoff, Resonance, Envelope, Volume -->
+          <div class="control-row knobs-row">
+            <div class="knob-group">
+              <div
+                id="knob-cutoff"
+                class="knob"
+                data-param="cutoff"
+                data-min="100"
+                data-max="5000"
+                data-value="2000"
+              ></div>
+              <span class="label">CUTOFF</span>
+            </div>
+            <div class="knob-group">
+              <div
+                id="knob-resonance"
+                class="knob"
+                data-param="resonance"
+                data-min="0"
+                data-max="30"
+                data-value="5"
+              ></div>
+              <span class="label">RES</span>
+            </div>
+            <div class="knob-group">
+              <div
+                id="knob-envelope"
+                class="knob"
+                data-param="envDecay"
+                data-min="0.01"
+                data-max="0.5"
+                data-value="0.15"
+              ></div>
+              <span class="label">ENV</span>
+            </div>
+            <div class="knob-group">
+              <div
+                id="knob-synth-vol"
+                class="knob"
+                data-param="synthVol"
+                data-min="0"
+                data-max="1"
+                data-value="0.5"
+              ></div>
+              <span class="label">VOL</span>
+            </div>
+          </div>
+
+          <!-- Octave -->
+          <div class="control-row">
+            <div class="octave-group">
+              <span class="label">OCTAVE</span>
+              <button id="btn-oct-down" class="small-btn">−</button>
+              <div class="led-row" id="oct-leds">
+                <div class="led"></div>
+                <div class="led active"></div>
+                <div class="led"></div>
+                <div class="led"></div>
+                <div class="led"></div>
+              </div>
+              <button id="btn-oct-up" class="small-btn">+</button>
+            </div>
+          </div>
+
+          <!-- Delay -->
+          <div class="control-row knobs-row">
+            <div class="knob-group">
+              <div
+                id="knob-delay-time"
+                class="knob"
+                data-param="delayTime"
+                data-min="0.01"
+                data-max="0.5"
+                data-value="0.2"
+              ></div>
+              <span class="label">DLY TIME</span>
+            </div>
+            <div class="knob-group">
+              <div
+                id="knob-delay-fb"
+                class="knob"
+                data-param="delayFeedback"
+                data-min="0"
+                data-max="0.8"
+                data-value="0"
+              ></div>
+              <span class="label">DLY FB</span>
+            </div>
+          </div>
+
+          <!-- Tempo & Swing Knobs -->
+          <div class="control-row knobs-row">
+            <div class="knob-group">
+              <div
+                id="knob-tempo"
+                class="knob"
+                data-param="tempo"
+                data-min="40"
+                data-max="240"
+                data-value="120"
+              ></div>
+              <span class="label">TEMPO</span>
+            </div>
+            <div class="knob-group">
+              <div
+                id="knob-swing"
+                class="knob"
+                data-param="swing"
+                data-min="0"
+                data-max="100"
+                data-value="0"
+              ></div>
+              <span class="label">SWING</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- --- CENTER: Keyboard + Sequencer --- -->
+        <section id="panel-center" class="panel">
+          <!-- Step Sequencer -->
+          <div id="sequencer-section">
+            <div class="panel-title">
+              STEP SEQUENCER
+              <div class="seq-controls">
+                <button id="btn-step-prev" class="small-btn">◀</button>
+                <span id="step-display" class="step-num">1</span>
+                <button id="btn-step-next" class="small-btn">▶</button>
+                <button id="btn-step-skip" class="small-btn">SKIP</button>
+              </div>
+            </div>
+            <div id="step-leds" class="step-led-row">
+              <!-- 16 step LEDs generated by JS -->
+            </div>
+            <div id="step-buttons" class="step-button-row">
+              <!-- 16 step buttons generated by JS -->
+            </div>
+          </div>
+
+          <!-- Keyboard -->
+          <div id="keyboard-section">
+            <div class="keyboard" id="keyboard">
+              <!-- Keys generated by JS -->
+            </div>
+          </div>
+        </section>
+
+        <!-- --- RIGHT: Drum Machine (Sub) --- -->
+        <section id="panel-drums" class="panel">
+          <div class="panel-title">DRUMS</div>
+          <div id="drum-tracks">
+            <!-- BD / SD / CHH / OHH tracks generated by JS -->
+          </div>
+          <div class="control-row knobs-row" id="drum-knobs">
+            <!-- Drum volume knobs generated by JS -->
+          </div>
+          <div class="drum-mutes" id="drum-mutes">
+            <!-- Mute buttons generated by JS -->
+          </div>
+        </section>
+      </main>
+
+      <!-- ===== BOTTOM: VCO Loop & Drawing (placeholder) ===== -->
+      <section id="panel-bottom">
+        <div id="vco-loop-panel" class="panel">
+          <!-- VCO Loop UI generated by JS -->
+        </div>
+        <div id="drawing-panel" class="panel">
+          <!-- Drawing Mode UI generated by JS -->
+        </div>
+      </section>
+
+      <!-- ===== FOOTER ===== -->
+      <footer id="synth-footer">
+        <span>DLOSy20 Web Synthesizer</span>
+        <span class="footer-hint"
+          >Keyboard: S D F G H J K L = White keys / E R T Y U I = Black
+          keys</span
+        >
+      </footer>
+    </div>
+
+    <!-- Scripts -->
+    <script src="js/audio-engine.js"></script>
+    <script src="js/ui-components.js"></script>
+    <script src="js/step-sequencer.js"></script>
+    <script src="js/drum-machine.js"></script>
+    <script src="js/vco-loop.js"></script>
+    <script src="js/drawing-mode.js"></script>
+    <script src="js/app.js"></script>
+  </body>
+</html>
