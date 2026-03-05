@@ -34,6 +34,26 @@ document.addEventListener('DOMContentLoaded', () => {
     unimSearch.init();
   }
 
+  // Initialize Preset Manager (save/load)
+  if (window.presetManager) {
+    presetManager.init();
+  }
+
+  // Center panel tab switching (Sequencer / Drums)
+  document.querySelectorAll('.center-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      // Update tab buttons
+      document.querySelectorAll('.center-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+
+      // Switch content
+      const target = tab.dataset.tab;
+      document.querySelectorAll('.center-tab-content').forEach(c => c.classList.remove('active'));
+      const content = document.getElementById(`center-tab-${target}`);
+      if (content) content.classList.add('active');
+    });
+  });
+
   // First click / touch to init audio context
   const initAudio = async () => {
     await audioEngine.init();

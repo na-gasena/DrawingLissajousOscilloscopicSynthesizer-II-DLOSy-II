@@ -6,18 +6,13 @@
 
 class DrawingMode {
   constructor() {
-    // Drawing slots (8 slots)
-    this.slots = [
-      { name: 'Draw 1', points: [], waveX: [], waveY: [] },
-      { name: 'Draw 2', points: [], waveX: [], waveY: [] },
-      { name: 'Draw 3', points: [], waveX: [], waveY: [] },
-      { name: 'Draw 4', points: [], waveX: [], waveY: [] },
-      { name: 'Draw 5', points: [], waveX: [], waveY: [] },
-      { name: 'Draw 6', points: [], waveX: [], waveY: [] },
-      { name: 'Draw 7', points: [], waveX: [], waveY: [] },
-      { name: 'Draw 8', points: [], waveX: [], waveY: [] },
-    ];
+    // Drawing slots (16 slots, display toggled between 8/16)
+    this.slots = [];
+    for (let i = 0; i < 16; i++) {
+      this.slots.push({ name: `Draw ${i + 1}`, points: [], waveX: [], waveY: [] });
+    }
     this.activeSlot = 0;
+    this.visibleSlotCount = 8; // 8 or 16
     this.isDrawing = false;
     this.autoSlotCycle = false; // Auto-cycle through slots on each step
 
@@ -50,6 +45,9 @@ class DrawingMode {
       <div class="panel-title">
         DRAWING MODE
         <div class="draw-header-controls">
+          <button id="draw-slots-8" class="small-btn step-count-btn active" data-slots="8">8</button>
+          <button id="draw-slots-16" class="small-btn step-count-btn" data-slots="16">16</button>
+          <span class="seq-separator">|</span>
           <button id="draw-auto-cycle" class="small-btn">AUTO CYCLE</button>
           <button id="draw-preview-btn" class="small-btn">♪ PREVIEW</button>
           <button id="draw-clear-btn" class="small-btn">CLEAR</button>
@@ -86,7 +84,8 @@ class DrawingMode {
     if (!container) return;
     container.innerHTML = '';
 
-    this.slots.forEach((slot, i) => {
+    for (let i = 0; i < this.visibleSlotCount; i++) {
+      const slot = this.slots[i];
       const tab = document.createElement('button');
       tab.className = 'draw-slot-tab' + (i === this.activeSlot ? ' active' : '');
       tab.textContent = slot.name;
@@ -99,7 +98,14 @@ class DrawingMode {
         this.updateWaveformPreview();
       });
       container.appendChild(tab);
-    });
+    }
+
+    // Clamp activeSlot if needed
+    if (this.activeSlot >= this.visibleSlotCount) {
+      this.activeSlot = 0;
+      this.redrawCanvas();
+      this.updateWaveformPreview();
+    }
   }
 
   initCanvas() {
@@ -142,12 +148,27 @@ class DrawingMode {
         btn.classList.toggle('vco-on', this.autoSlotCycle);
       }
     });
+
+    // Slot count toggle (8 / 16)
+    document.getElementById('draw-slots-8')?.addEventListener('click', () => {
+      this.visibleSlotCount = 8;
+      document.getElementById('draw-slots-8')?.classList.add('active');
+      document.getElementById('draw-slots-16')?.classList.remove('active');
+      this.buildSlotTabs();
+    });
+
+    document.getElementById('draw-slots-16')?.addEventListener('click', () => {
+      this.visibleSlotCount = 16;
+      document.getElementById('draw-slots-16')?.classList.add('active');
+      document.getElementById('draw-slots-8')?.classList.remove('active');
+      this.buildSlotTabs();
+    });
   }
 
   // Advance to next slot (called from step sequencer on each step tick)
   advanceSlot() {
     if (!this.autoSlotCycle) return;
-    this.activeSlot = (this.activeSlot + 1) % this.slots.length;
+    this.activeSlot = (this.activeSlot + 1) % this.visibleSlotCount;
     // Update UI tabs
     document.querySelectorAll('.draw-slot-tab').forEach((t, idx) => {
       t.classList.toggle('active', idx === this.activeSlot);

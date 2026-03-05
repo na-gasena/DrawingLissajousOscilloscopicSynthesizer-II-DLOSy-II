@@ -14,8 +14,8 @@ class VCOLoop {
     // Curve data: each parameter has an array of control points
     // Points: { x: 0-1 (time normalized), y: 0-1 (value normalized) }
     this.curves = {
-      frequency:  { points: [{x:0, y:0.3}, {x:0.5, y:0.6}, {x:1, y:0.3}], min: 65, max: 2000, label: 'FREQ' },
-      cutoff:     { points: [{x:0, y:0.7}, {x:1, y:0.7}], min: 100, max: 5000, label: 'CUTOFF' },
+      frequency:  { points: [{x:0, y:0.3}, {x:0.5, y:0.6}, {x:1, y:0.3}], min: 65, max: 2000, label: 'FREQ', log: true },
+      cutoff:     { points: [{x:0, y:0.7}, {x:1, y:0.7}], min: 100, max: 5000, label: 'CUTOFF', log: true },
       resonance:  { points: [{x:0, y:0.2}, {x:1, y:0.2}], min: 0, max: 30, label: 'RES' },
       attack:     { points: [{x:0, y:0.05}, {x:1, y:0.05}], min: 0.001, max: 0.5, label: 'ATK' },
       decay:      { points: [{x:0, y:0.3}, {x:1, y:0.3}], min: 0.01, max: 1.0, label: 'DEC' },
@@ -35,6 +35,14 @@ class VCOLoop {
     // Playback
     this.playheadPosition = 0; // 0-1
     this.animationFrameId = null;
+
+    // Continuous mode
+    this.continuousMode = false; // false=STEP, true=CONTINUOUS
+    this.continuousRAF = null;
+    this.stepStartTime = 0;
+    this.stepDuration = 0; // ms per bar
+    this.lastStepIndex = 0;
+    this.lastTotalSteps = 16;
   }
 
   init() {
@@ -197,6 +205,17 @@ class VCOLoop {
     this.gain.gain.value = vol * this.masterVolume;
   }
 
+  // Convert normalized value (0-1) to actual parameter value
+  // Uses logarithmic scaling for frequency-like parameters
+  normalizedToValue(y, curve) {
+    if (curve.log && curve.min > 0) {
+      // Logarithmic: min * (max/min)^y
+      return curve.min * Math.pow(curve.max / curve.min, y);
+    }
+    // Linear: min + y * (max - min)
+    return curve.min + y * (curve.max - curve.min);
+  }
+
   // Interpolate value from curve at position t (0-1)
   getValueAt(paramName, t) {
     const curve = this.curves[paramName];
@@ -204,7 +223,7 @@ class VCOLoop {
 
     const pts = curve.points;
     if (pts.length === 0) return curve.min;
-    if (pts.length === 1) return curve.min + pts[0].y * (curve.max - curve.min);
+    if (pts.length === 1) return this.normalizedToValue(pts[0].y, curve);
 
     // Find surrounding points
     let left = pts[0];
@@ -218,32 +237,81 @@ class VCOLoop {
       }
     }
 
-    // Linear interpolation
+    // Linear interpolation of normalized value
     const range = right.x - left.x;
     const localT = range > 0 ? (t - left.x) / range : 0;
     const normalizedValue = left.y + (right.y - left.y) * localT;
 
-    return curve.min + normalizedValue * (curve.max - curve.min);
+    return this.normalizedToValue(normalizedValue, curve);
   }
 
   // ===== SYNC WITH STEP SEQUENCER =====
 
   onStepTick(stepIndex, totalSteps) {
     if (!this.enabled) return;
-    this.playheadPosition = stepIndex / totalSteps;
-    this.applyAtPosition(this.playheadPosition);
+
+    this.lastStepIndex = stepIndex;
+    this.lastTotalSteps = totalSteps;
+
+    if (this.continuousMode) {
+      // In continuous mode, just record timestamp for interpolation
+      this.stepStartTime = performance.now();
+      // Calculate step duration from BPM
+      if (window.stepSequencer) {
+        const bpm = stepSequencer.bpm || 120;
+        this.stepDuration = (60000 / bpm) / 4; // per-step duration in ms
+      }
+    } else {
+      // STEP mode: discrete update
+      this.playheadPosition = stepIndex / totalSteps;
+      this.applyAtPosition(this.playheadPosition);
+    }
   }
 
   onPlayStart() {
     if (!this.enabled) return;
     if (!audioEngine.isInitialized) return;
     this.startOsc();
+    if (this.continuousMode) {
+      this.startContinuousLoop();
+    }
   }
 
   onPlayStop() {
     this.stopOsc();
+    this.stopContinuousLoop();
     this.playheadPosition = 0;
     this.updatePlayhead();
+  }
+
+  // ===== CONTINUOUS MODE =====
+
+  startContinuousLoop() {
+    this.stopContinuousLoop();
+    const loop = () => {
+      if (!this.enabled || !this.isOscRunning) return;
+
+      const now = performance.now();
+      const elapsed = now - this.stepStartTime;
+      const stepFraction = this.stepDuration > 0 ? Math.min(elapsed / this.stepDuration, 1) : 0;
+
+      // Smoothly interpolate playhead between steps
+      this.playheadPosition = (this.lastStepIndex + stepFraction) / this.lastTotalSteps;
+      if (this.playheadPosition > 1) this.playheadPosition = 1;
+
+      this.applyAtPosition(this.playheadPosition);
+      this.updatePlayhead();
+
+      this.continuousRAF = requestAnimationFrame(loop);
+    };
+    this.continuousRAF = requestAnimationFrame(loop);
+  }
+
+  stopContinuousLoop() {
+    if (this.continuousRAF) {
+      cancelAnimationFrame(this.continuousRAF);
+      this.continuousRAF = null;
+    }
   }
 
   // ===== UI =====
@@ -257,6 +325,10 @@ class VCOLoop {
         VCO LOOP
         <div class="vco-header-controls">
           <button id="vco-toggle" class="small-btn vco-toggle-btn">OFF</button>
+          <div class="vco-mode-select">
+            <button class="vco-mode-btn active" data-mode="step">STEP</button>
+            <button class="vco-mode-btn" data-mode="cont">CONT</button>
+          </div>
           <div class="vco-wave-select">
             <button class="vco-wave-btn active" data-wave="sine">SIN</button>
             <button class="vco-wave-btn" data-wave="triangle">TRI</button>
@@ -344,6 +416,24 @@ class VCOLoop {
         }
       } else {
         this.stopOsc();
+      }
+    });
+
+    // STEP / CONT mode toggle
+    document.addEventListener('click', (e) => {
+      if (e.target.classList.contains('vco-mode-btn')) {
+        document.querySelectorAll('.vco-mode-btn').forEach(b => b.classList.remove('active'));
+        e.target.classList.add('active');
+        const mode = e.target.dataset.mode;
+        this.continuousMode = (mode === 'cont');
+
+        if (this.isOscRunning) {
+          if (this.continuousMode) {
+            this.startContinuousLoop();
+          } else {
+            this.stopContinuousLoop();
+          }
+        }
       }
     });
 

@@ -197,19 +197,57 @@ python -m http.server 3000
 
 ---
 
+## VCO Loop パラメータスケーリング
+
+`frequency` と `cutoff` は **対数スケール** を使用。低音域で細かく、高音域でおおざっぱに調整可能。
+
+| パラメータ | スケール | 変換式                  |
+| ---------- | -------- | ----------------------- |
+| frequency  | 対数     | `min * (max/min)^y`     |
+| cutoff     | 対数     | `min * (max/min)^y`     |
+| 他全て     | 線形     | `min + y * (max - min)` |
+
+### 発音モード
+
+| モード | 動作                                           |
+| ------ | ---------------------------------------------- |
+| STEP   | ステップ同期で離散的にパラメータ更新           |
+| CONT   | `requestAnimationFrame` でステップ間を連続補間 |
+
+---
+
+## UIレイアウト
+
+### メインパネル構成
+
+- **LEFT**: SYNTH（波形選択、ADSR、オクターブ、エフェクト）
+- **CENTER**: タブ切り替え
+  - **SEQUENCER タブ**: Step Sequencer + Keyboard
+  - **DRUMS タブ**: 6トラック Drum Machine（グリッド左 + ノブ右）+ MIDI OUT
+  - **Unim Glyph Search**: タブ外に配置（常時表示）
+- **BOTTOM**: VCO Loop（STEP/CONT切替）+ Drawing Mode（8/16スロット切替）
+
+### プリセット管理
+
+- ヘッダーに 💾 SAVE / 📂 LOAD ボタン
+- `localStorage` 自動保存（2秒デバウンス）+ JSONファイルエクスポート/インポート
+
+---
+
 ## 主要モジュール概要
 
-| モジュール          | 責務                                    | グローバル変数名 |
-| ------------------- | --------------------------------------- | ---------------- |
-| `audio-engine.js`   | AudioContext管理、シンセ/ドラム音源作成 | `audioEngine`    |
-| `adsr-editor.js`    | エンベロープ曲線のビジュアル編集        | `adsrEditor`     |
-| `step-sequencer.js` | 16/32ステップの記録・同期再生           | `stepSequencer`  |
-| `drum-machine.js`   | 6トラックのドラムパターン・一括制御     | `drumMachine`    |
-| `midi-out.js`       | Web MIDI API を介した外部出力管理       | `midiOut`        |
-| `vco-loop.js`       | 8パラメータ曲線エディタ                 | `vcoLoop`        |
-| `drawing-mode.js`   | Canvas描画→LR波形変換（8スロット）      | `drawingMode`    |
-| `unim-search.js`    | Unim API検索 → Drawing Modeスロット反映 | `unimSearch`     |
-| `app.js`            | 全モジュールの初期化                    | —                |
+| モジュール          | 責務                                     | グローバル変数名 |
+| ------------------- | ---------------------------------------- | ---------------- |
+| `audio-engine.js`   | AudioContext管理、シンセ/ドラム音源作成  | `audioEngine`    |
+| `adsr-editor.js`    | エンベロープ曲線のビジュアル編集         | `adsrEditor`     |
+| `step-sequencer.js` | 16/32ステップの記録・同期再生            | `stepSequencer`  |
+| `drum-machine.js`   | 6トラックのドラムパターン・一括制御      | `drumMachine`    |
+| `midi-out.js`       | Web MIDI API を介した外部出力管理        | `midiOut`        |
+| `vco-loop.js`       | 8パラメータ曲線エディタ                  | `vcoLoop`        |
+| `drawing-mode.js`   | 波形描画キャンバス（8/16スロット）       | `drawingMode`    |
+| `unim-search.js`    | Unim Unicode検索・グリフ適用             | `unimSearch`     |
+| `preset-manager.js` | プリセット保存/読込（localStorage+JSON） | `presetManager`  |
+| `app.js`            | 全モジュールの初期化                     | —                |
 
 ---
 

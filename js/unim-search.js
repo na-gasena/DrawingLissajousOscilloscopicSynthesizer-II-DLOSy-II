@@ -23,6 +23,9 @@ class UnimSearch {
     // Cache: store full API response to avoid re-fetching on filter change
     this.cachedResult = null;
     this.cachedQuery = '';
+
+    // Remember the last slot we imported into, to enable auto-advance on consecutive imports
+    this.lastImportedSlotIndex = -1;
   }
 
   init() {
@@ -251,24 +254,32 @@ class UnimSearch {
     this.search();
   }
 
-  // Apply selected glyph to Drawing Mode active slot, then advance to next slot
+  // Apply selected glyph to Drawing Mode active slot
   applyGlyph(glyph) {
     if (!glyph.path || !window.drawingMode) return;
 
-    const slotIndex = drawingMode.activeSlot;
+    let targetSlot = drawingMode.activeSlot;
+
+    // If we consecutively import without the user manually changing the slot in between,
+    // advance to the next slot BEFORE importing.
+    if (this.lastImportedSlotIndex === targetSlot) {
+      targetSlot = (targetSlot + 1) % drawingMode.slots.length;
+      drawingMode.activeSlot = targetSlot;
+
+      // Update Drawing Mode UI tabs to reflect the new active slot
+      document.querySelectorAll('.draw-slot-tab').forEach((t, idx) => {
+        t.classList.toggle('active', idx === targetSlot);
+      });
+      drawingMode.redrawCanvas();
+      drawingMode.updateWaveformPreview();
+    }
+
+    // Import into the chosen slot
     drawingMode.importSVGPath(glyph.path);
-    this.setStatus(`Slot ${slotIndex + 1} ← ${this.formatCode(glyph.code_str)}`);
+    this.setStatus(`Slot ${targetSlot + 1} ← ${this.formatCode(glyph.code_str)}`);
 
-    // Advance to next slot (0→1→…→7→0)
-    const nextSlot = (slotIndex + 1) % drawingMode.slots.length;
-    drawingMode.activeSlot = nextSlot;
-
-    // Update Drawing Mode UI tabs
-    document.querySelectorAll('.draw-slot-tab').forEach((t, idx) => {
-      t.classList.toggle('active', idx === nextSlot);
-    });
-    drawingMode.redrawCanvas();
-    drawingMode.updateWaveformPreview();
+    // Record this slot as the last one we imported into
+    this.lastImportedSlotIndex = targetSlot;
   }
 }
 

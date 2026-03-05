@@ -177,6 +177,46 @@ body {
     0 4px 12px rgba(0, 0, 0, 0.3);
 }
 
+/* Center Panel Tab Bar */
+.center-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.center-tab {
+  padding: 4px 14px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 1px;
+  background: var(--btn-surface);
+  border: 1px solid var(--border-panel);
+  color: var(--text-secondary);
+  border-radius: 3px 3px 0 0;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.center-tab:hover {
+  color: var(--text-primary);
+  border-color: var(--accent-secondary);
+}
+
+.center-tab.active {
+  background: var(--accent-secondary);
+  color: #000;
+  border-color: var(--accent-secondary);
+  font-weight: bold;
+}
+
+.center-tab-content {
+  display: none;
+}
+
+.center-tab-content.active {
+  display: block;
+}
+
 .panel-title {
   font-family: var(--font-display);
   font-size: 12px;
@@ -620,11 +660,98 @@ body {
 }
 
 /* ===== DRUM MACHINE ===== */
-#panel-drums .panel-title {
+.drum-layout {
+  display: flex;
+  gap: 12px;
+}
+
+.drum-grid-area {
+  flex: 1;
+  overflow-x: auto;
+}
+
+.drum-controls-area {
+  width: 130px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.drum-controls-area .knobs-row {
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+}
+
+.drum-controls-area .knob-group {
+  transform: scale(0.8);
+  transform-origin: center;
+}
+
+#center-tab-drums .panel-title {
   display: flex;
   justify-content: space-between;
   align-items: center;
   color: var(--accent-secondary);
+}
+
+.drum-track {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-bottom: 3px;
+}
+
+.drum-track-label {
+  width: 32px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-secondary);
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.drum-step {
+  flex: 1;
+  height: 28px;
+  min-width: 20px;
+  background: var(--bg-panel-inset);
+  border: 1px solid var(--border-panel);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.1s;
+}
+
+.drum-step:hover {
+  border-color: var(--accent-secondary);
+}
+
+.drum-step.on {
+  background: var(--accent-secondary);
+  border-color: var(--accent-secondary);
+  box-shadow: 0 0 6px rgba(245, 166, 35, 0.4);
+}
+
+.drum-step.playing {
+  box-shadow: 0 0 10px rgba(232, 69, 69, 0.6);
+}
+
+.drum-mute-btn {
+  padding: 3px 6px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  background: var(--btn-surface);
+  border: 1px solid var(--border-panel);
+  color: var(--text-primary);
+  cursor: pointer;
+  border-radius: 3px;
+  transition: all 0.15s;
+}
+
+.drum-mute-btn.muted {
+  opacity: 0.3;
+  color: var(--text-secondary);
 }
 
 /* MIDI OUT Controls */
@@ -1188,4 +1315,42 @@ body {
   height: 80%;
   fill: var(--text-primary);
   pointer-events: none;
+}
+
+/* ===== PRESET MANAGER ===== */
+.preset-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.preset-status {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--accent-secondary);
+  min-width: 80px;
+}
+
+/* VCO Mode Buttons (STEP / CONT) */
+.vco-mode-select {
+  display: flex;
+  gap: 2px;
+}
+
+.vco-mode-btn {
+  padding: 2px 8px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  background: var(--btn-surface);
+  border: 1px solid var(--border-panel);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.vco-mode-btn.active {
+  background: var(--accent-cyan);
+  color: #000;
+  border-color: var(--accent-cyan);
+  font-weight: bold;
 }
