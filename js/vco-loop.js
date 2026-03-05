@@ -54,9 +54,38 @@ class VCOLoop {
     this.gain = ctx.createGain();
     this.gain.gain.value = 0.3;
 
-    this.osc = ctx.createOscillator();
-    this.osc.type = this.waveType;
-    this.osc.frequency.value = 220;
+    if (this.waveType === 'drawing' && window.drawingMode) {
+      // Drawing mode: use stereo AudioBuffer loop
+      const slot = drawingMode.slots[drawingMode.activeSlot];
+      if (slot && slot.waveX.length > 0) {
+        const bufferLength = slot.waveX.length;
+        const buffer = ctx.createBuffer(2, bufferLength, ctx.sampleRate);
+        const lData = buffer.getChannelData(0);
+        const rData = buffer.getChannelData(1);
+        for (let i = 0; i < bufferLength; i++) {
+          lData[i] = slot.waveX[i] || 0;
+          rData[i] = (slot.waveY[i] !== undefined) ? slot.waveY[i] : (slot.waveX[i] || 0);
+        }
+        this.osc = ctx.createBufferSource();
+        this.osc.buffer = buffer;
+        this.osc.loop = true;
+        this.baseFreq = ctx.sampleRate / bufferLength;
+        this.osc.playbackRate.value = 220 / this.baseFreq;
+        this.isDrawingOsc = true;
+      } else {
+        // Fallback to sine
+        this.osc = ctx.createOscillator();
+        this.osc.type = 'sine';
+        this.osc.frequency.value = 220;
+        this.isDrawingOsc = false;
+      }
+    } else {
+      // Standard oscillator
+      this.osc = ctx.createOscillator();
+      this.osc.type = this.waveType;
+      this.osc.frequency.value = 220;
+      this.isDrawingOsc = false;
+    }
 
     this.osc.connect(this.filter);
     this.filter.connect(this.gain);
@@ -78,6 +107,16 @@ class VCOLoop {
     this.osc = null;
   }
 
+  // Refresh oscillator when drawing data changes during playback
+  refreshDrawingOsc() {
+    if (!this.isOscRunning || !this.isDrawingOsc) return;
+    if (this.waveType !== 'drawing') return;
+    const savedPos = this.playheadPosition;
+    this.stopOsc();
+    this.startOsc();
+    this.applyAtPosition(savedPos);
+  }
+
   // Apply curve values at current playhead position
   applyAtPosition(pos) {
     if (!this.isOscRunning) return;
@@ -87,7 +126,13 @@ class VCOLoop {
     const res = this.getValueAt('resonance', pos);
     const vol = this.getValueAt('volume', pos);
 
-    this.osc.frequency.value = freq;
+    if (this.isDrawingOsc) {
+      // Drawing mode: control pitch via playbackRate
+      this.osc.playbackRate.value = freq / this.baseFreq;
+    } else {
+      // Standard oscillator: control pitch via frequency
+      this.osc.frequency.value = freq;
+    }
     this.filter.frequency.value = cutoff;
     this.filter.Q.value = res;
     this.gain.gain.value = vol;
@@ -158,6 +203,7 @@ class VCOLoop {
             <button class="vco-wave-btn" data-wave="triangle">TRI</button>
             <button class="vco-wave-btn" data-wave="square">SQR</button>
             <button class="vco-wave-btn" data-wave="sawtooth">SAW</button>
+            <button class="vco-wave-btn" data-wave="drawing">DRAW</button>
           </div>
         </div>
       </div>
@@ -249,9 +295,21 @@ class VCOLoop {
       if (e.target.classList.contains('vco-wave-btn')) {
         document.querySelectorAll('.vco-wave-btn').forEach(b => b.classList.remove('active'));
         e.target.classList.add('active');
-        this.waveType = e.target.dataset.wave;
-        if (this.osc && this.isOscRunning) {
-          this.osc.type = this.waveType;
+        const newWave = e.target.dataset.wave;
+        const oldWave = this.waveType;
+        this.waveType = newWave;
+
+        if (this.isOscRunning) {
+          // If switching to/from Drawing, need to recreate the oscillator
+          const needsRecreate = (oldWave === 'drawing') !== (newWave === 'drawing');
+          if (needsRecreate) {
+            this.stopOsc();
+            this.startOsc();
+            this.applyAtPosition(this.playheadPosition);
+          } else if (!this.isDrawingOsc) {
+            // Standard → Standard: just change type
+            this.osc.type = this.waveType;
+          }
         }
       }
     });

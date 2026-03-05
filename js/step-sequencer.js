@@ -194,10 +194,10 @@ class StepSequencer {
     const step = this.steps[this.currentStep];
     if (step.on && step.freq > 0) {
       if (step.waveType === 'drawing' && window.drawingMode) {
-        // Drawing wave: use PeriodicWave from drawing slot
-        const periodicWave = drawingMode.getPeriodicWave(step.drawingSlot);
-        if (periodicWave) {
-          audioEngine.playFreqWithWave(step.freq, periodicWave);
+        // Drawing wave: play with stereo AudioBuffer (L=waveX, R=waveY)
+        const slot = drawingMode.slots[step.drawingSlot];
+        if (slot && slot.waveX.length > 0) {
+          audioEngine.playFreqWithDrawing(step.freq, slot.waveX, slot.waveY);
         } else {
           // Fallback to sine if no drawing data
           const originalWave = audioEngine.params.waveType;

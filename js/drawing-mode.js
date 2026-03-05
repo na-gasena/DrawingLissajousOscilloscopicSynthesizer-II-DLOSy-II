@@ -165,6 +165,10 @@ class DrawingMode {
     if (this.isPreviewPlaying) {
       this.applyWaveformToPreview();
     }
+    // Refresh VCO Loop if it's using this drawing
+    if (window.vcoLoop) {
+      vcoLoop.refreshDrawingOsc();
+    }
   }
 
   onMouseUp() {
@@ -406,20 +410,7 @@ class DrawingMode {
     }
     if (slot.waveX.length === 0) return;
 
-    const ctx = audioEngine.ctx;
-
-    this.previewGain = ctx.createGain();
-    this.previewGain.gain.value = 0.3;
-    this.previewGain.connect(audioEngine.masterGain);
-
-    this.previewOsc = ctx.createOscillator();
-
-    // Build PeriodicWave from drawing waveform (L channel = waveX)
-    this.applyWaveformToPreview();
-
-    this.previewOsc.frequency.value = 220;
-    this.previewOsc.connect(this.previewGain);
-    this.previewOsc.start();
+    this.createPreviewSource();
     this.isPreviewPlaying = true;
 
     const btn = document.getElementById('draw-preview-btn');
@@ -429,7 +420,41 @@ class DrawingMode {
     }
   }
 
-  stopPreview() {
+  createPreviewSource() {
+    // Stop previous source if any
+    this.stopPreviewSource();
+
+    const ctx = audioEngine.ctx;
+    const slot = this.slots[this.activeSlot];
+    const bufferLength = slot.waveX.length;
+    if (bufferLength === 0) return;
+
+    // Create stereo buffer: L=waveX, R=waveY
+    const buffer = ctx.createBuffer(2, bufferLength, ctx.sampleRate);
+    const lData = buffer.getChannelData(0);
+    const rData = buffer.getChannelData(1);
+    for (let i = 0; i < bufferLength; i++) {
+      lData[i] = slot.waveX[i] || 0;
+      rData[i] = (slot.waveY[i] !== undefined) ? slot.waveY[i] : (slot.waveX[i] || 0);
+    }
+
+    this.previewGain = ctx.createGain();
+    this.previewGain.gain.value = 0.3;
+    this.previewGain.connect(audioEngine.masterGain);
+
+    this.previewOsc = ctx.createBufferSource();
+    this.previewOsc.buffer = buffer;
+    this.previewOsc.loop = true;
+
+    // Set playback rate for 220Hz base
+    const baseFreq = ctx.sampleRate / bufferLength;
+    this.previewOsc.playbackRate.value = 220 / baseFreq;
+
+    this.previewOsc.connect(this.previewGain);
+    this.previewOsc.start();
+  }
+
+  stopPreviewSource() {
     if (this.previewOsc) {
       try { this.previewOsc.stop(); } catch(e) {}
       this.previewOsc.disconnect();
@@ -439,6 +464,10 @@ class DrawingMode {
       this.previewGain.disconnect();
       this.previewGain = null;
     }
+  }
+
+  stopPreview() {
+    this.stopPreviewSource();
     this.isPreviewPlaying = false;
 
     const btn = document.getElementById('draw-preview-btn');
@@ -448,53 +477,11 @@ class DrawingMode {
     }
   }
 
+  // Update preview audio in real-time while drawing
   applyWaveformToPreview() {
-    if (!this.previewOsc || !audioEngine.ctx) return;
-    const slot = this.slots[this.activeSlot];
-    if (slot.waveX.length === 0) return;
-
-    try {
-      const real = new Float32Array(slot.waveX.length);
-      const imag = new Float32Array(slot.waveX.length);
-
-      // Use waveX as the waveform shape
-      // Convert time-domain to frequency domain approximation
-      // Simple: use the drawn waveform directly as the periodic wave's coefficients
-      real[0] = 0;
-      imag[0] = 0;
-      for (let i = 1; i < slot.waveX.length; i++) {
-        real[i] = slot.waveX[i] * (1 / i);
-        imag[i] = slot.waveY[i] ? slot.waveY[i] * (1 / i) : 0;
-      }
-
-      const wave = audioEngine.ctx.createPeriodicWave(real, imag, { disableNormalization: false });
-      this.previewOsc.setPeriodicWave(wave);
-    } catch(e) {
-      console.warn('Failed to apply waveform:', e);
-    }
-  }
-
-  // ===== STEP SEQUENCER INTEGRATION =====
-
-  // Get PeriodicWave for a given slot index
-  getPeriodicWave(slotIndex) {
-    if (!audioEngine.ctx) return null;
-    const slot = this.slots[slotIndex];
-    if (!slot || slot.waveX.length === 0) return null;
-
-    try {
-      const real = new Float32Array(slot.waveX.length);
-      const imag = new Float32Array(slot.waveX.length);
-      real[0] = 0;
-      imag[0] = 0;
-      for (let i = 1; i < slot.waveX.length; i++) {
-        real[i] = slot.waveX[i] * (1 / i);
-        imag[i] = slot.waveY[i] ? slot.waveY[i] * (1 / i) : 0;
-      }
-      return audioEngine.ctx.createPeriodicWave(real, imag, { disableNormalization: false });
-    } catch(e) {
-      return null;
-    }
+    if (!this.isPreviewPlaying) return;
+    // Recreate the source with updated waveform data
+    this.createPreviewSource();
   }
 
   // ===== UI HELPERS =====

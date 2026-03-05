@@ -174,28 +174,46 @@ class AudioEngine {
     return baseFreq * this.octaveMultipliers[this.params.octave];
   }
 
-  // Play a frequency with a custom PeriodicWave (for Drawing mode)
-  playFreqWithWave(freq, periodicWave) {
-    if (!this.isInitialized || !periodicWave) return;
+  // Play a frequency using Drawing waveform (stereo: L=waveX, R=waveY)
+  // This preserves L/R separation for Lissajous/XY oscilloscope display
+  playFreqWithDrawing(freq, waveX, waveY) {
+    if (!this.isInitialized) return;
+    if (!waveX || waveX.length === 0) return;
 
     const now = this.ctx.currentTime;
+    const bufferLength = waveX.length;
 
-    const osc = this.ctx.createOscillator();
-    osc.setPeriodicWave(periodicWave);
-    osc.frequency.setValueAtTime(freq, now);
+    // Create stereo buffer: L=waveX, R=waveY
+    const buffer = this.ctx.createBuffer(2, bufferLength, this.ctx.sampleRate);
+    const lData = buffer.getChannelData(0);
+    const rData = buffer.getChannelData(1);
+    for (let i = 0; i < bufferLength; i++) {
+      lData[i] = waveX[i] || 0;
+      rData[i] = (waveY && waveY[i]) ? waveY[i] : (waveX[i] || 0);
+    }
 
+    const source = this.ctx.createBufferSource();
+    source.buffer = buffer;
+    source.loop = true;
+
+    // Frequency control via playbackRate
+    // Base frequency = sampleRate / bufferLength
+    const baseFreq = this.ctx.sampleRate / bufferLength;
+    source.playbackRate.value = freq / baseFreq;
+
+    // Envelope
     const envGain = this.ctx.createGain();
     envGain.gain.setValueAtTime(this.params.synthVol, now);
     envGain.gain.exponentialRampToValueAtTime(0.001, now + this.params.envDecay + 0.01);
 
-    osc.connect(envGain);
+    source.connect(envGain);
     envGain.connect(this.filter);
 
-    osc.start(now);
-    osc.stop(now + this.params.envDecay + 0.05);
+    source.start(now);
+    source.stop(now + this.params.envDecay + 0.05);
 
-    osc.onended = () => {
-      osc.disconnect();
+    source.onended = () => {
+      source.disconnect();
       envGain.disconnect();
     };
   }
