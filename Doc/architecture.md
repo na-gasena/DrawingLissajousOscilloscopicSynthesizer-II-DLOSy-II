@@ -30,12 +30,12 @@ DLOSy20/
 ├── js/
 │   ├── audio-engine.js        ← Web Audio API 音声エンジン
 │   ├── ui-components.js       ← ノブ・鍵盤・ボタン UI
-│   ├── step-sequencer.js        ← 16/32ステップシーケンサー
+│   ├── step-sequencer.js      ← 16/32ステップシーケンサー（シームレス切替）
 │   ├── drum-machine.js        ← ドラムマシン (6 tracks: BD/SD/CHH/OHH/CLP/RIM)
 │   ├── adsr-editor.js         ← ADSR曲線ビジュアルエディタ
 │   ├── midi-out.js            ← MIDI OUT (Web MIDI API)
 │   ├── vco-loop.js            ← VCO Loop 曲線エディタ
-│   ├── drawing-mode.js        ← Drawing Mode 描画→波形変換
+│   ├── drawing-mode.js        ← Drawing Mode 描画→波形変換（8スロット）
 │   └── app.js                 ← メイン初期化スクリプト
 └── Doc/
     └── architecture.md        ← 本ドキュメント

@@ -6,12 +6,16 @@
 
 class DrawingMode {
   constructor() {
-    // Drawing slots
+    // Drawing slots (8 slots)
     this.slots = [
       { name: 'Draw 1', points: [], waveX: [], waveY: [] },
       { name: 'Draw 2', points: [], waveX: [], waveY: [] },
       { name: 'Draw 3', points: [], waveX: [], waveY: [] },
       { name: 'Draw 4', points: [], waveX: [], waveY: [] },
+      { name: 'Draw 5', points: [], waveX: [], waveY: [] },
+      { name: 'Draw 6', points: [], waveX: [], waveY: [] },
+      { name: 'Draw 7', points: [], waveX: [], waveY: [] },
+      { name: 'Draw 8', points: [], waveX: [], waveY: [] },
     ];
     this.activeSlot = 0;
     this.isDrawing = false;

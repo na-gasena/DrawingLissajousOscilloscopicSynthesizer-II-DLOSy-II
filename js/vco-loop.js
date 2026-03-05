@@ -8,6 +8,13 @@ class VCOLoop {
     // State
     this.enabled = false;
     this.waveType = 'sine';
+    this.masterVolume = 0.3;
+    this.fadeDuration = 0.2; // seconds
+
+    // Drawing slot sequencing for VCO Loop
+    this.drawSlotSeqEnabled = false;
+    this.drawSlotPattern = new Array(16).fill(0); // slot index per step
+    this.currentDrawSlot = 0;
 
     // Curve data: each parameter has an array of control points
     // Points: { x: 0-1 (time normalized), y: 0-1 (value normalized) }
@@ -91,18 +98,37 @@ class VCOLoop {
     this.filter.connect(this.gain);
     this.gain.connect(audioEngine.masterGain);
 
+    // Fade in
+    this.gain.gain.setValueAtTime(0, audioEngine.ctx.currentTime);
+    this.gain.gain.linearRampToValueAtTime(this.masterVolume, audioEngine.ctx.currentTime + this.fadeDuration);
+
     this.osc.start();
     this.isOscRunning = true;
   }
 
   stopOsc() {
     if (!this.isOscRunning) return;
-    try {
-      this.osc.stop();
-      this.osc.disconnect();
-      this.filter.disconnect();
-      this.gain.disconnect();
-    } catch(e) {}
+    const ctx = audioEngine.ctx;
+    const now = ctx.currentTime;
+
+    // Fade out, then disconnect
+    this.gain.gain.cancelScheduledValues(now);
+    this.gain.gain.setValueAtTime(this.gain.gain.value, now);
+    this.gain.gain.linearRampToValueAtTime(0, now + this.fadeDuration);
+
+    const oscRef = this.osc;
+    const filterRef = this.filter;
+    const gainRef = this.gain;
+
+    setTimeout(() => {
+      try {
+        oscRef.stop();
+        oscRef.disconnect();
+        filterRef.disconnect();
+        gainRef.disconnect();
+      } catch(e) {}
+    }, this.fadeDuration * 1000 + 50);
+
     this.isOscRunning = false;
     this.osc = null;
   }
@@ -115,6 +141,44 @@ class VCOLoop {
     this.stopOsc();
     this.startOsc();
     this.applyAtPosition(savedPos);
+  }
+
+  // Switch drawing buffer to a different slot without interrupting playback
+  switchDrawBuffer(slotIndex) {
+    if (!this.isOscRunning || !this.isDrawingOsc) return;
+    if (!window.drawingMode) return;
+
+    const slot = drawingMode.slots[slotIndex];
+    if (!slot || slot.waveX.length === 0) return;
+
+    const ctx = audioEngine.ctx;
+    const bufferLength = slot.waveX.length;
+    const buffer = ctx.createBuffer(2, bufferLength, ctx.sampleRate);
+    const lData = buffer.getChannelData(0);
+    const rData = buffer.getChannelData(1);
+    for (let i = 0; i < bufferLength; i++) {
+      lData[i] = slot.waveX[i] || 0;
+      rData[i] = (slot.waveY[i] !== undefined) ? slot.waveY[i] : (slot.waveX[i] || 0);
+    }
+
+    // Create new buffer source and swap
+    const oldOsc = this.osc;
+    const newOsc = ctx.createBufferSource();
+    newOsc.buffer = buffer;
+    newOsc.loop = true;
+    this.baseFreq = ctx.sampleRate / bufferLength;
+    newOsc.playbackRate.value = oldOsc.playbackRate.value;
+
+    newOsc.connect(this.filter);
+    newOsc.start();
+
+    // Stop old osc
+    try {
+      oldOsc.stop();
+      oldOsc.disconnect();
+    } catch(e) {}
+
+    this.osc = newOsc;
   }
 
   // Apply curve values at current playhead position
@@ -135,7 +199,7 @@ class VCOLoop {
     }
     this.filter.frequency.value = cutoff;
     this.filter.Q.value = res;
-    this.gain.gain.value = vol;
+    this.gain.gain.value = vol * this.masterVolume;
   }
 
   // Interpolate value from curve at position t (0-1)
@@ -173,6 +237,17 @@ class VCOLoop {
     if (!this.enabled) return;
     this.playheadPosition = stepIndex / totalSteps;
     this.applyAtPosition(this.playheadPosition);
+
+    // Drawing slot sequencing: switch slot on each step
+    if (this.drawSlotSeqEnabled && this.waveType === 'drawing' && this.isOscRunning) {
+      const patIdx = stepIndex % this.drawSlotPattern.length;
+      const targetSlot = this.drawSlotPattern[patIdx];
+      if (targetSlot !== this.currentDrawSlot && window.drawingMode) {
+        this.currentDrawSlot = targetSlot;
+        drawingMode.activeSlot = targetSlot;
+        this.switchDrawBuffer(targetSlot);
+      }
+    }
   }
 
   onPlayStart() {
@@ -204,6 +279,10 @@ class VCOLoop {
             <button class="vco-wave-btn" data-wave="square">SQR</button>
             <button class="vco-wave-btn" data-wave="sawtooth">SAW</button>
             <button class="vco-wave-btn" data-wave="drawing">DRAW</button>
+          </div>
+          <div class="vco-vol-group">
+            <span class="label">VOL</span>
+            <input id="vco-vol-slider" type="range" min="0" max="100" value="30" class="vco-vol-slider" />
           </div>
         </div>
       </div>
@@ -281,6 +360,14 @@ class VCOLoop {
         }
       } else {
         this.stopOsc();
+      }
+    });
+
+    // VCO Volume slider
+    document.getElementById('vco-vol-slider')?.addEventListener('input', (e) => {
+      this.masterVolume = parseInt(e.target.value) / 100;
+      if (this.isOscRunning && this.gain) {
+        this.gain.gain.setValueAtTime(this.masterVolume, audioEngine.ctx.currentTime);
       }
     });
 

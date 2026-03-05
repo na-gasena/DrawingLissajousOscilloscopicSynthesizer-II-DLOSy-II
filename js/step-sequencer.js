@@ -46,10 +46,8 @@ class StepSequencer {
     this.updateUI();
   }
 
-  // Change step count (16 or 32), preserve existing data
+  // Change step count (16 or 32), preserve existing data, seamless during playback
   setStepCount(count) {
-    if (this.isPlaying) this.stop();
-
     const oldSteps = [...this.steps];
     this.numSteps = count;
     this.steps = [];
@@ -57,11 +55,16 @@ class StepSequencer {
       this.steps.push(i < oldSteps.length ? oldSteps[i] : this.createEmptyStep());
     }
 
-    this.currentStep = 0;
+    // Clamp positions
+    if (this.currentStep >= count) this.currentStep = 0;
     this.editStep = Math.min(this.editStep, count - 1);
+
+    // Rebuild UI (preserves playback)
     this.ledElements = [];
     this.btnElements = [];
     this.buildUI();
+    // Re-bind only the step buttons (buildUI creates new button elements)
+    // Note: transport/controls are bound once in init(), only step click handlers need rebinding
 
     // Sync drums
     if (window.drumMachine) {
@@ -255,6 +258,16 @@ class StepSequencer {
     const step = this.steps[this.currentStep];
     if (step.on && step.freq > 0) {
       if (step.waveType === 'drawing' && window.drawingMode) {
+        // Auto-switch drawing slot for sequencing
+        if (step.drawingSlot !== drawingMode.activeSlot) {
+          drawingMode.activeSlot = step.drawingSlot;
+          drawingMode.redrawCanvas();
+          drawingMode.updateWaveformPreview();
+          // Update slot tab UI
+          document.querySelectorAll('.draw-slot-tab').forEach((t, idx) => {
+            t.classList.toggle('active', idx === step.drawingSlot);
+          });
+        }
         // Drawing wave: play with stereo AudioBuffer (L=waveX, R=waveY)
         const slot = drawingMode.slots[step.drawingSlot];
         if (slot && slot.waveX.length > 0) {

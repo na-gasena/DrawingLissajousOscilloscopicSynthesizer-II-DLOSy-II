@@ -470,15 +470,45 @@ body {
   font-size: 12px;
 }
 
-/* Auto-sizing for 32 steps */
+/* Auto-sizing for 32 steps: wrap into 2 rows of 16 */
 .step-led-row, .step-button-row {
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
+  max-width: calc(16 * 40px); /* 16 steps per row */
+  margin: 0 auto;
 }
 
 .step-btn {
   min-width: 20px;
-  flex: 1;
+  flex: 0 0 calc(100% / 16 - 4px);
   max-width: 36px;
+}
+
+.step-led {
+  flex: 0 0 auto;
+}
+
+/* Drum grid also wraps at 16 */
+.drum-track {
+  flex-wrap: wrap;
+}
+
+.drum-step {
+  flex: 0 0 auto;
+}
+
+/* VCO Volume Slider */
+.vco-vol-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+}
+
+.vco-vol-slider {
+  width: 60px;
+  height: 4px;
+  accent-color: var(--accent-secondary);
+  cursor: pointer;
 }
 
 /* ===== KEYBOARD ===== */
