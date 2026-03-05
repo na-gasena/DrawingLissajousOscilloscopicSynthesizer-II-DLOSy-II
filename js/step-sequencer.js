@@ -13,19 +13,64 @@ class StepSequencer {
 
     // Sequence data
     this.steps = [];
-    for (let i = 0; i < this.numSteps; i++) {
-      this.steps.push({
-        on: false,
-        freq: 0,
-        note: '',
-        waveType: 'sine', // Per-step wave type
-        drawingSlot: 0,   // Drawing slot index (for 'drawing' waveType)
-      });
-    }
+    this.resetSteps(this.numSteps);
 
     // UI elements
     this.ledElements = [];
     this.btnElements = [];
+  }
+
+  // Initialize/reset step data for given count
+  resetSteps(count) {
+    this.steps = [];
+    for (let i = 0; i < count; i++) {
+      this.steps.push(this.createEmptyStep());
+    }
+  }
+
+  // Create a single empty step data object
+  createEmptyStep() {
+    return {
+      on: false,
+      freq: 0,
+      note: '',
+      waveType: 'sine',
+      drawingSlot: 0,
+    };
+  }
+
+  // Clear (reset) a single step at given index
+  clearStep(index) {
+    if (index < 0 || index >= this.steps.length) return;
+    this.steps[index] = this.createEmptyStep();
+    this.updateUI();
+  }
+
+  // Change step count (16 or 32), preserve existing data
+  setStepCount(count) {
+    if (this.isPlaying) this.stop();
+
+    const oldSteps = [...this.steps];
+    this.numSteps = count;
+    this.steps = [];
+    for (let i = 0; i < count; i++) {
+      this.steps.push(i < oldSteps.length ? oldSteps[i] : this.createEmptyStep());
+    }
+
+    this.currentStep = 0;
+    this.editStep = Math.min(this.editStep, count - 1);
+    this.ledElements = [];
+    this.btnElements = [];
+    this.buildUI();
+
+    // Sync drums
+    if (window.drumMachine) {
+      drumMachine.setStepCount(count);
+    }
+
+    // Update step count button UI
+    document.getElementById('btn-steps-16')?.classList.toggle('active', count === 16);
+    document.getElementById('btn-steps-32')?.classList.toggle('active', count === 32);
   }
 
   init() {
@@ -93,6 +138,22 @@ class StepSequencer {
         this.updateUI();
         this.updateStepDisplay();
       }
+    });
+
+    // DEL: clear current edit step data
+    document.getElementById('btn-step-del')?.addEventListener('click', () => {
+      if (!this.isPlaying) {
+        this.clearStep(this.editStep);
+        this.updateStepDisplay();
+      }
+    });
+
+    // Step count toggle: 16 / 32
+    document.getElementById('btn-steps-16')?.addEventListener('click', () => {
+      this.setStepCount(16);
+    });
+    document.getElementById('btn-steps-32')?.addEventListener('click', () => {
+      this.setStepCount(32);
     });
   }
 
@@ -242,9 +303,11 @@ class StepSequencer {
   updateUI() {
     this.btnElements.forEach((btn, i) => {
       btn.classList.toggle('on', this.steps[i].on);
+      btn.classList.toggle('editing', !this.isPlaying && i === this.editStep);
     });
     this.ledElements.forEach((led, i) => {
       led.classList.toggle('active', this.steps[i].on);
+      led.classList.toggle('editing', !this.isPlaying && i === this.editStep);
     });
   }
 
@@ -253,6 +316,8 @@ class StepSequencer {
     if (display) {
       display.textContent = this.editStep + 1;
     }
+    // Refresh editing highlight
+    this.updateUI();
   }
 
   updateTempo() {

@@ -27,7 +27,10 @@ class AudioEngine {
       waveType: 'sine',
       cutoff: 2000,
       resonance: 5,
+      envAttack: 0.01,
       envDecay: 0.15,
+      envSustain: 0.3,
+      envRelease: 0.2,
       delayTime: 0.2,
       delayFeedback: 0.0,
       tempo: 120,
@@ -91,7 +94,7 @@ class AudioEngine {
     this.delayWet.connect(this.masterGain);
 
     // Init drum gains
-    const drumNames = ['bd', 'sd', 'chh', 'ohh'];
+    const drumNames = ['bd', 'sd', 'chh', 'ohh', 'clp', 'rim'];
     drumNames.forEach(name => {
       this.drumGains[name] = this.ctx.createGain();
       this.drumGains[name].gain.value = 0.5;
@@ -117,24 +120,27 @@ class AudioEngine {
     if (!freq) return;
 
     const now = this.ctx.currentTime;
+    const { envAttack, envDecay, envSustain, envRelease, synthVol } = this.params;
+    const totalDur = envAttack + envDecay + envRelease + 0.05;
 
     // Oscillator
     const osc = this.ctx.createOscillator();
     osc.type = this.params.waveType;
     osc.frequency.setValueAtTime(freq, now);
 
-    // Envelope
+    // ADSR Envelope
     const envGain = this.ctx.createGain();
-    envGain.gain.setValueAtTime(this.params.synthVol, now);
-    envGain.gain.exponentialRampToValueAtTime(0.001, now + this.params.envDecay + 0.01);
+    envGain.gain.setValueAtTime(0.001, now);
+    envGain.gain.linearRampToValueAtTime(synthVol, now + envAttack);
+    envGain.gain.linearRampToValueAtTime(synthVol * envSustain, now + envAttack + envDecay);
+    envGain.gain.linearRampToValueAtTime(0.001, now + envAttack + envDecay + envRelease);
 
     osc.connect(envGain);
     envGain.connect(this.filter);
 
     osc.start(now);
-    osc.stop(now + this.params.envDecay + 0.05);
+    osc.stop(now + totalDur);
 
-    // Cleanup
     osc.onended = () => {
       osc.disconnect();
       envGain.disconnect();
@@ -147,20 +153,24 @@ class AudioEngine {
     if (!this.isInitialized) return;
 
     const now = this.ctx.currentTime;
+    const { envAttack, envDecay, envSustain, envRelease, synthVol } = this.params;
+    const totalDur = envAttack + envDecay + envRelease + 0.05;
 
     const osc = this.ctx.createOscillator();
     osc.type = this.params.waveType;
     osc.frequency.setValueAtTime(freq, now);
 
     const envGain = this.ctx.createGain();
-    envGain.gain.setValueAtTime(this.params.synthVol, now);
-    envGain.gain.exponentialRampToValueAtTime(0.001, now + this.params.envDecay + 0.01);
+    envGain.gain.setValueAtTime(0.001, now);
+    envGain.gain.linearRampToValueAtTime(synthVol, now + envAttack);
+    envGain.gain.linearRampToValueAtTime(synthVol * envSustain, now + envAttack + envDecay);
+    envGain.gain.linearRampToValueAtTime(0.001, now + envAttack + envDecay + envRelease);
 
     osc.connect(envGain);
     envGain.connect(this.filter);
 
     osc.start(now);
-    osc.stop(now + this.params.envDecay + 0.05);
+    osc.stop(now + totalDur);
 
     osc.onended = () => {
       osc.disconnect();
@@ -201,16 +211,21 @@ class AudioEngine {
     const baseFreq = this.ctx.sampleRate / bufferLength;
     source.playbackRate.value = freq / baseFreq;
 
-    // Envelope
+    // ADSR Envelope
+    const { envAttack, envDecay, envSustain, envRelease, synthVol } = this.params;
+    const totalDur = envAttack + envDecay + envRelease + 0.05;
+
     const envGain = this.ctx.createGain();
-    envGain.gain.setValueAtTime(this.params.synthVol, now);
-    envGain.gain.exponentialRampToValueAtTime(0.001, now + this.params.envDecay + 0.01);
+    envGain.gain.setValueAtTime(0.001, now);
+    envGain.gain.linearRampToValueAtTime(synthVol, now + envAttack);
+    envGain.gain.linearRampToValueAtTime(synthVol * envSustain, now + envAttack + envDecay);
+    envGain.gain.linearRampToValueAtTime(0.001, now + envAttack + envDecay + envRelease);
 
     source.connect(envGain);
     envGain.connect(this.filter);
 
     source.start(now);
-    source.stop(now + this.params.envDecay + 0.05);
+    source.stop(now + totalDur);
 
     source.onended = () => {
       source.disconnect();
@@ -332,6 +347,68 @@ class AudioEngine {
     noise.start(now);
 
     noise.onended = () => { noise.disconnect(); hpf.disconnect(); env.disconnect(); };
+  }
+
+  playCLP() {
+    if (!this.isInitialized) return;
+    const now = this.ctx.currentTime;
+
+    // Clap: multiple noise bursts layered
+    for (let j = 0; j < 3; j++) {
+      const offset = j * 0.01;
+      const bufferSize = this.ctx.sampleRate * 0.05;
+      const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = (Math.random() * 2 - 1) * 0.6;
+      }
+
+      const noise = this.ctx.createBufferSource();
+      noise.buffer = buffer;
+
+      const env = this.ctx.createGain();
+      env.gain.setValueAtTime(this.drumGains['clp'].gain.value * 0.4, now + offset);
+      env.gain.exponentialRampToValueAtTime(0.001, now + offset + 0.08);
+
+      const bpf = this.ctx.createBiquadFilter();
+      bpf.type = 'bandpass';
+      bpf.frequency.value = 2500;
+      bpf.Q.value = 2;
+
+      noise.connect(bpf);
+      bpf.connect(env);
+      env.connect(this.masterGain);
+      noise.start(now + offset);
+
+      noise.onended = () => { noise.disconnect(); bpf.disconnect(); env.disconnect(); };
+    }
+  }
+
+  playRIM() {
+    if (!this.isInitialized) return;
+    const now = this.ctx.currentTime;
+
+    // Rimshot: high-frequency pulse
+    const osc = this.ctx.createOscillator();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(800, now);
+    osc.frequency.exponentialRampToValueAtTime(400, now + 0.02);
+
+    const env = this.ctx.createGain();
+    env.gain.setValueAtTime(this.drumGains['rim'].gain.value * 0.4, now);
+    env.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
+
+    const hpf = this.ctx.createBiquadFilter();
+    hpf.type = 'highpass';
+    hpf.frequency.value = 600;
+
+    osc.connect(hpf);
+    hpf.connect(env);
+    env.connect(this.masterGain);
+    osc.start(now);
+    osc.stop(now + 0.06);
+
+    osc.onended = () => { osc.disconnect(); hpf.disconnect(); env.disconnect(); };
   }
 
   // ===== PARAMETER SETTERS =====

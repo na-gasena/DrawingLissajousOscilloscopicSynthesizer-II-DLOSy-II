@@ -9,6 +9,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // Initialize UI Components (knobs, keyboard, buttons)
   uiComponents.init();
 
+  // Initialize ADSR Envelope Curve Editor
+  adsrEditor.init();
+
   // Initialize Step Sequencer
   stepSequencer.init();
 
@@ -20,6 +23,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Initialize Drawing Mode
   drawingMode.init();
+
+  // Initialize MIDI OUT
+  if (window.midiOut) {
+    midiOut.init();
+  }
 
   // First click / touch to init audio context
   const initAudio = async () => {

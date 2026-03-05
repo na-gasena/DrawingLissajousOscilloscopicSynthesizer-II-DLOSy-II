@@ -8,6 +8,7 @@
 | スタイリング | Vanilla CSS       | CSS変数でデザインシステム管理                           |
 | ロジック     | JavaScript (ES6+) | クラスベース、フレームワーク不使用                      |
 | 音声処理     | Web Audio API     | OscillatorNode / BufferSource / BiquadFilter / GainNode |
+| 外部連携     | Web MIDI API      | MIDI OUT (外部機器/DAW制御)                             |
 | フォント     | Google Fonts      | Orbitron (Display) / Share Tech Mono (Mono)             |
 | 開発サーバー | npx serve         | Node.jsベースの静的サーバー                             |
 
@@ -29,8 +30,10 @@ DLOSy20/
 ├── js/
 │   ├── audio-engine.js        ← Web Audio API 音声エンジン
 │   ├── ui-components.js       ← ノブ・鍵盤・ボタン UI
-│   ├── step-sequencer.js      ← 16ステップシーケンサー
-│   ├── drum-machine.js        ← ドラムマシン (BD/SD/CHH/OHH)
+│   ├── step-sequencer.js        ← 16/32ステップシーケンサー
+│   ├── drum-machine.js        ← ドラムマシン (6 tracks: BD/SD/CHH/OHH/CLP/RIM)
+│   ├── adsr-editor.js         ← ADSR曲線ビジュアルエディタ
+│   ├── midi-out.js            ← MIDI OUT (Web MIDI API)
 │   ├── vco-loop.js            ← VCO Loop 曲線エディタ
 │   ├── drawing-mode.js        ← Drawing Mode 描画→波形変換
 │   └── app.js                 ← メイン初期化スクリプト
@@ -48,17 +51,22 @@ graph TD
     end
 
     subgraph "Audio Layer"
-        AE["audio-engine.js<br/>(AudioContext / Master)"]
+        AE["audio-engine.js<br/>(AudioContext / ADSR)"]
     end
 
     subgraph "Sequencer Layer"
-        SS["step-sequencer.js<br/>(16 Step / 再生制御)"]
-        DM["drum-machine.js<br/>(BD/SD/CHH/OHH)"]
+        SS["step-sequencer.js<br/>(16/32 Step / 再生制御)"]
+        DM["drum-machine.js<br/>(6 Tracks / Pattern)"]
     end
 
     subgraph "Synth Extensions"
+        ADSR["adsr-editor.js<br/>(ビジュアルADSR管理)"]
         VCO["vco-loop.js<br/>(曲線エディタ / 連続パラメータ)"]
         DRAW["drawing-mode.js<br/>(Canvas描画 → LR波形)"]
+    end
+
+    subgraph "External Integration"
+        MIDI["midi-out.js<br/>(Web MIDI API)"]
     end
 
     subgraph "UI Layer"
@@ -73,21 +81,26 @@ graph TD
     APP --> DM
     APP --> VCO
     APP --> DRAW
+    APP --> ADSR
+    APP --> MIDI
 
-    UI -->|"playNote / setParam"| AE
-    UI -->|"recordStep"| SS
+    UI --> AE
+    UI --> SS
 
-    SS -->|"playFreq / playFreqWithDrawing"| AE
-    SS -->|"playStep"| DM
-    SS -->|"onStepTick"| VCO
+    SS --> AE
+    SS --> DM
+    SS --> VCO
 
-    DM -->|"playBD/SD/CHH/OHH"| AE
+    DM --> AE
+    DM --> MIDI
 
-    VCO -->|"startOsc / applyAtPosition"| AE
-    VCO -->|"Drawing波形バッファ"| DRAW
+    ADSR --> AE
 
-    DRAW -->|"playFreqWithDrawing"| AE
-    DRAW -->|"refreshDrawingOsc"| VCO
+    VCO --> AE
+    VCO --> DRAW
+
+    DRAW --> AE
+    DRAW --> VCO
 ```
 
 ### 音声ルーティング
@@ -95,41 +108,53 @@ graph TD
 ```mermaid
 graph LR
     subgraph "音源 A: Step Sequencer"
-        OSC_A["Oscillator<br/>(Sine/Tri/Sqr/Saw)"]
-        BUF_A["BufferSource<br/>(Drawing波形 L/R)"]
+        OSC_A["Oscillator / BufferSource"]
     end
 
     subgraph "音源 B: VCO Loop"
         OSC_B["Oscillator / BufferSource"]
     end
 
-    subgraph "サブ: Drums"
-        BD["Bass Drum"]
-        SD["Snare"]
-        HH["HiHat"]
+    subgraph "サブ: Drums (6ch)"
+        DRUMS["BD/SD/CHH/OHH/CLP/RIM"]
     end
 
     subgraph "エフェクト"
-        FLT["BiquadFilter<br/>(LPF)"]
+        ADSR_ENV["ADSR Envelope"]
+        FLT["BiquadFilter (LPF)"]
         DLY["Delay + Feedback"]
     end
 
     MASTER["Master Gain"]
-    OUT["AudioContext.destination<br/>(スピーカー / DAW)"]
+    OUT["Destination"]
 
-    OSC_A --> FLT
-    BUF_A --> FLT
+    OSC_A --> ADSR_ENV --> FLT
+    OSC_B --> MASTER
+    DRUMS --> MASTER
+
     FLT --> MASTER
     FLT --> DLY --> MASTER
-
-    OSC_B --> MASTER
-
-    BD --> MASTER
-    SD --> MASTER
-    HH --> MASTER
-
     MASTER --> OUT
 ```
+
+---
+
+## MIDI 仕様 (MIDI OUT)
+
+ドラムマシンの各ステップは、再生時に MIDI Ch 10 を通じて外部にノート信号を送信できます。
+
+| パート  | MIDI Note (GM) | 名称          |
+| ------- | -------------- | ------------- |
+| **BD**  | 36             | Bass Drum 1   |
+| **SD**  | 38             | Snare Drum 1  |
+| **CHH** | 42             | Closed Hi-Hat |
+| **OHH** | 46             | Open Hi-Hat   |
+| **CLP** | 39             | Hand Clap     |
+| **RIM** | 37             | Side Stick    |
+
+- **チャンネル**: 10 (固定)
+- **ベロシティ**: 100 (固定)
+- **接続**: ブラウザ経由での MIDI デバイス列挙・選択が可能
 
 ---
 
@@ -142,16 +167,10 @@ graph LR
 ### コマンド
 
 ```powershell
-# プロジェクトフォルダで実行
-cd c:\Freefile\PROJECT\2026\02_DLOSyV2603\2_prj\DLOSy20
 npx -y serve@latest ./
 ```
 
-起動後、以下のURLにアクセス：
-
-```
-http://localhost:3000
-```
+起動後、 `http://localhost:3000` にアクセス。
 
 > [!TIP]
 > `npx -y` により `serve` パッケージを自動インストール＆実行します。
@@ -172,12 +191,13 @@ python -m http.server 3000
 
 ## 主要モジュール概要
 
-| モジュール          | 責務                                            | グローバル変数名 |
-| ------------------- | ----------------------------------------------- | ---------------- |
-| `audio-engine.js`   | AudioContext管理、シンセ/ドラム発音、エフェクト | `audioEngine`    |
-| `ui-components.js`  | ノブ操作、鍵盤UI、PCキーボード入力マッピング    | `uiComponents`   |
-| `step-sequencer.js` | 16ステップの記録/再生/テンポ/スイング制御       | `stepSequencer`  |
-| `drum-machine.js`   | 4トラック(BD/SD/CHH/OHH)のパターン管理          | `drumMachine`    |
-| `vco-loop.js`       | 8パラメータの曲線エディタ、連続オシレーター     | `vcoLoop`        |
-| `drawing-mode.js`   | Canvas描画→LR波形変換、4スロット管理            | `drawingMode`    |
-| `app.js`            | 全モジュールの初期化、AudioContext起動          | —                |
+| モジュール          | 責務                                    | グローバル変数名 |
+| ------------------- | --------------------------------------- | ---------------- |
+| `audio-engine.js`   | AudioContext管理、シンセ/ドラム音源作成 | `audioEngine`    |
+| `adsr-editor.js`    | エンベロープ曲線のビジュアル編集        | `adsrEditor`     |
+| `step-sequencer.js` | 16/32ステップの記録・同期再生           | `stepSequencer`  |
+| `drum-machine.js`   | 6トラックのドラムパターン・一括制御     | `drumMachine`    |
+| `midi-out.js`       | Web MIDI API を介した外部出力管理       | `midiOut`        |
+| `vco-loop.js`       | 8パラメータ曲線エディタ                 | `vcoLoop`        |
+| `drawing-mode.js`   | Canvas描画→LR波形変換                   | `drawingMode`    |
+| `app.js`            | 全モジュールの初期化                    | —                |

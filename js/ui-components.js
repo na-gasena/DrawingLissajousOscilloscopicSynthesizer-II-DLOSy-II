@@ -214,7 +214,18 @@ class UIComponents {
     }
     audioEngine.resume();
 
-    audioEngine.playNote(note);
+    // Play note: check if Drawing mode
+    if (audioEngine.params.waveType === 'drawing' && window.drawingMode) {
+      const freq = audioEngine.getNoteFreq(note);
+      const slot = drawingMode.slots[drawingMode.activeSlot];
+      if (freq && slot && slot.waveX.length > 0) {
+        audioEngine.playFreqWithDrawing(freq, slot.waveX, slot.waveY);
+      } else {
+        audioEngine.playNote(note);
+      }
+    } else {
+      audioEngine.playNote(note);
+    }
     keyEl.classList.add('pressed');
 
     // Step input: record to sequencer (works during playback too)

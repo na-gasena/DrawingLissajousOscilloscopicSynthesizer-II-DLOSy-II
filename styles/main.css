@@ -436,6 +436,51 @@ body {
   box-shadow: 0 0 6px rgba(232, 69, 69, 0.3);
 }
 
+/* Edit cursor highlight */
+.step-led.editing {
+  background: #00e5ff;
+  box-shadow: 0 0 8px rgba(0, 229, 255, 0.7);
+}
+
+.step-btn.editing {
+  border-color: #00e5ff;
+  box-shadow: 0 0 6px rgba(0, 229, 255, 0.4);
+}
+
+/* DEL button */
+.btn-del {
+  color: #e84545 !important;
+  border-color: #e84545 !important;
+}
+
+.btn-del:hover {
+  background: rgba(232, 69, 69, 0.2) !important;
+}
+
+/* Step count toggle */
+.step-count-btn.active {
+  background: var(--accent-primary);
+  color: #fff;
+  border-color: var(--accent-primary);
+}
+
+.seq-separator {
+  color: var(--text-secondary);
+  margin: 0 2px;
+  font-size: 12px;
+}
+
+/* Auto-sizing for 32 steps */
+.step-led-row, .step-button-row {
+  flex-wrap: nowrap;
+}
+
+.step-btn {
+  min-width: 20px;
+  flex: 1;
+  max-width: 36px;
+}
+
 /* ===== KEYBOARD ===== */
 #keyboard-section {
   padding: 8px 0;
@@ -497,7 +542,42 @@ body {
 
 /* ===== DRUM MACHINE ===== */
 #panel-drums .panel-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   color: var(--accent-secondary);
+}
+
+/* MIDI OUT Controls */
+.midi-out-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.midi-select {
+  background: var(--bg-panel-inset);
+  color: var(--text-primary);
+  border: 1px solid var(--border-panel);
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 2px 4px;
+  max-width: 120px;
+}
+
+.midi-active {
+  background: var(--accent-secondary) !important;
+  color: #000 !important;
+  border-color: var(--accent-secondary) !important;
+}
+
+.midi-status {
+  color: var(--text-secondary);
+  font-size: 9px;
+  min-width: 30px;
 }
 
 .drum-track {
@@ -552,6 +632,39 @@ body {
   gap: 6px;
   margin-top: 8px;
   justify-content: center;
+}
+
+/* ===== ADSR ENVELOPE EDITOR ===== */
+.adsr-editor-wrapper {
+  width: 100%;
+}
+
+.adsr-editor-wrapper > .label {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.adsr-canvas-container {
+  border: 1px solid var(--border-panel);
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--bg-panel-inset);
+}
+
+.adsr-canvas-container canvas {
+  display: block;
+  width: 100%;
+  height: 80px;
+  cursor: crosshair;
+}
+
+.adsr-values {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-secondary);
+  margin-top: 3px;
+  text-align: center;
+  letter-spacing: 0.5px;
 }
 
 /* ===== VCO LOOP ===== */
