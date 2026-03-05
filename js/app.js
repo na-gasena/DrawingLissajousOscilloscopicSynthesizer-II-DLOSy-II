@@ -39,6 +39,16 @@ document.addEventListener('DOMContentLoaded', () => {
     effectsEngine.init();
   }
 
+  // Initialize CV Clock Sync
+  if (window.cvClock) {
+    cvClock.init();
+  }
+
+  // Initialize MIDI IN
+  if (window.midiIn) {
+    midiIn.init();
+  }
+
   // Initialize Preset Manager (save/load)
   if (window.presetManager) {
     presetManager.init();

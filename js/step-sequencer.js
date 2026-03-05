@@ -288,6 +288,9 @@ class StepSequencer {
   scheduleNext() {
     if (!this.isPlaying) return;
 
+    // EXT CV mode: do not self-schedule, wait for cvClock.onTick()
+    if (window.cvClock && cvClock.mode === 'ext') return;
+
     const bpm = audioEngine.params.tempo;
     const stepDuration = (60 / bpm) * 1000 / 4; // 16th notes
     const swing = audioEngine.params.swing || 0;
@@ -305,6 +308,14 @@ class StepSequencer {
       this.currentStep = (this.currentStep + 1) % this.numSteps;
       this.scheduleNext();
     }, delay);
+  }
+
+  // Called by CVClock on each external pulse
+  externalTick() {
+    if (!this.isPlaying) return;
+    this.playCurrentStep();
+    this.updatePlaybackUI();
+    this.currentStep = (this.currentStep + 1) % this.numSteps;
   }
 
   playCurrentStep() {

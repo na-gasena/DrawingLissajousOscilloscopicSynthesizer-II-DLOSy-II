@@ -1589,3 +1589,55 @@ body {
   border-color: var(--accent-secondary);
   font-weight: bold;
 }
+
+/* ===== CV CLOCK ===== */
+.cv-clock-controls,
+.midi-in-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 0;
+  border-top: 1px solid var(--border-panel);
+}
+
+.cv-clock-row,
+.midi-in-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.cv-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-secondary);
+  width: 42px;
+  flex-shrink: 0;
+}
+
+.cv-val {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-value);
+  min-width: 28px;
+}
+
+.cv-bpm {
+  font-size: 14px;
+  font-weight: bold;
+  color: var(--accent-primary);
+}
+
+.cv-status,
+.midi-status {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-secondary);
+  margin-left: auto;
+}
+
+.midi-active {
+  background: var(--accent-secondary) !important;
+  color: #000 !important;
+}
