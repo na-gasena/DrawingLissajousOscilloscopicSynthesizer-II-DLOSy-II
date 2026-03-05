@@ -36,6 +36,7 @@ DLOSy20/
 │   ├── midi-out.js            ← MIDI OUT (Web MIDI API)
 │   ├── vco-loop.js            ← VCO Loop 曲線エディタ
 │   ├── drawing-mode.js        ← Drawing Mode 描画→波形変換（8スロット）
+│   ├── unim-search.js         ← Unim Unicode検索 → Drawing Mode連携
 │   └── app.js                 ← メイン初期化スクリプト
 └── Doc/
     └── architecture.md        ← 本ドキュメント
@@ -67,6 +68,7 @@ graph TD
 
     subgraph "External Integration"
         MIDI["midi-out.js<br/>(Web MIDI API)"]
+        UNIM["unim-search.js<br/>(Unim API → Drawing Mode)"]
     end
 
     subgraph "UI Layer"
@@ -83,6 +85,7 @@ graph TD
     APP --> DRAW
     APP --> ADSR
     APP --> MIDI
+    APP --> UNIM
 
     UI --> AE
     UI --> SS
@@ -97,6 +100,7 @@ graph TD
     ADSR --> AE
 
     VCO --> AE
+    UNIM --> DRAW
     VCO --> DRAW
 
     DRAW --> AE
@@ -203,5 +207,37 @@ python -m http.server 3000
 | `drum-machine.js`   | 6トラックのドラムパターン・一括制御     | `drumMachine`    |
 | `midi-out.js`       | Web MIDI API を介した外部出力管理       | `midiOut`        |
 | `vco-loop.js`       | 8パラメータ曲線エディタ                 | `vcoLoop`        |
-| `drawing-mode.js`   | Canvas描画→LR波形変換                   | `drawingMode`    |
+| `drawing-mode.js`   | Canvas描画→LR波形変換（8スロット）      | `drawingMode`    |
+| `unim-search.js`    | Unim API検索 → Drawing Modeスロット反映 | `unimSearch`     |
 | `app.js`            | 全モジュールの初期化                    | —                |
+
+---
+
+## Unim グリフ検索 (unim-search.js)
+
+外部API (`https://s.baku89.com/unim/api/v1`) を介してUnicode文字のグリフ（SVGパス）を検索し、Drawing Modeのスロットに反映する。
+
+### 検索モード (searchBy)
+
+| モード | 説明                         | APIパラメータ |
+| ------ | ---------------------------- | ------------- |
+| Char   | 文字そのもので検索           | `?char=世`    |
+| Code   | Unicode 16進数指定           | `?code=4E16`  |
+| Index  | データベースインデックス番号 | `?index=123`  |
+
+### フィルタモード (filterBy)
+
+| モード | 説明                                           |
+| ------ | ---------------------------------------------- |
+| Code   | Unicode順（前後の文字）                        |
+| pHash  | 画像ハッシュによる形状類似                     |
+| CNN    | AI（畳み込みニューラルネット）による視覚的類似 |
+| Name   | Unicode名称の文字列類似                        |
+
+### 動作フロー
+
+1. 検索欄に文字を入力 → **Enter** で検索実行
+2. APIレスポンスをキャッシュ（フィルタ切替時は再fetchなし）
+3. 結果グリッドにSVGサムネイル表示
+4. **左クリック**: 現在のDrawスロットに上書き → 自動で次のスロットに進行 (1→2→…→8→1)
+5. **右クリック**: 選択したグリフで再検索

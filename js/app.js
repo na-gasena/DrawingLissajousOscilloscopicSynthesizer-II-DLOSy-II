@@ -29,6 +29,11 @@ document.addEventListener('DOMContentLoaded', () => {
     midiOut.init();
   }
 
+  // Initialize Unim Search
+  if (window.unimSearch) {
+    unimSearch.init();
+  }
+
   // First click / touch to init audio context
   const initAudio = async () => {
     await audioEngine.init();

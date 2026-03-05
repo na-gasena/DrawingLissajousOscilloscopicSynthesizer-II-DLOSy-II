@@ -161,6 +161,89 @@ class DrawingMode {
     }
   }
 
+  // Import SVG path data from Unim glyph into active slot
+  importSVGPath(svgPathData) {
+    if (!this.canvas || !this.ctx2d) return;
+
+    const size = this.canvasSize; // 256
+    const svgSize = 1000; // Unim viewBox
+    const scale = size / svgSize;
+
+    // Create offscreen canvas for path tracing
+    const offCanvas = document.createElement('canvas');
+    offCanvas.width = size;
+    offCanvas.height = size;
+    const offCtx = offCanvas.getContext('2d');
+
+    // Scale and draw the SVG path
+    offCtx.save();
+    offCtx.scale(scale, scale);
+
+    const path = new Path2D(svgPathData);
+    offCtx.lineWidth = 3 / scale;
+    offCtx.strokeStyle = '#fff';
+    offCtx.stroke(path);
+    offCtx.restore();
+
+    // Extract outline points by scanning the stroked path
+    const imageData = offCtx.getImageData(0, 0, size, size);
+    const data = imageData.data;
+    const points = [];
+
+    // Find contour points (non-transparent pixels on the stroke)
+    // Sample at regular intervals along edges for a clean outline
+    for (let y = 0; y < size; y += 2) {
+      for (let x = 0; x < size; x += 2) {
+        const idx = (y * size + x) * 4;
+        if (data[idx + 3] > 128) { // alpha > 128
+          points.push({ x, y });
+        }
+      }
+    }
+
+    if (points.length === 0) return;
+
+    // Sort points to form a continuous path (nearest-neighbor sort)
+    const sortedPoints = [points[0]];
+    const used = new Set([0]);
+
+    for (let i = 1; i < points.length; i++) {
+      const last = sortedPoints[sortedPoints.length - 1];
+      let nearest = -1;
+      let nearestDist = Infinity;
+
+      for (let j = 0; j < points.length; j++) {
+        if (used.has(j)) continue;
+        const dx = points[j].x - last.x;
+        const dy = points[j].y - last.y;
+        const dist = dx * dx + dy * dy;
+        if (dist < nearestDist) {
+          nearestDist = dist;
+          nearest = j;
+        }
+      }
+
+      if (nearest === -1) break;
+      used.add(nearest);
+      sortedPoints.push(points[nearest]);
+    }
+
+    // Apply to active slot
+    const slot = this.slots[this.activeSlot];
+    slot.points = sortedPoints;
+
+    // Redraw and convert to waveform
+    this.redrawCanvas();
+    this.convertToWaveform();
+    this.updateWaveformPreview();
+    this.updatePointCount();
+
+    // Update VCO Loop if running in drawing mode
+    if (window.vcoLoop && vcoLoop.isOscRunning && vcoLoop.isDrawingOsc) {
+      vcoLoop.refreshDrawingOsc();
+    }
+  }
+
   // ===== DRAWING =====
 
   getCanvasPos(e) {
