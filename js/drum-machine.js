@@ -32,6 +32,13 @@ class DrumMachine {
     // Build tracks from definitions
     this.tracks = {};
     this.initTracks();
+
+    // Pattern bank (8 slots)
+    this.activePattern = 0;
+    this.patternBank = [];
+    for (let i = 0; i < 8; i++) {
+      this.patternBank.push(null);
+    }
   }
 
   initTracks() {
@@ -64,8 +71,61 @@ class DrumMachine {
     this.buildUI();
   }
 
+  // ===== PATTERN BANK =====
+  switchPattern(index) {
+    if (index === this.activePattern) return;
+    // Save current pattern
+    const saved = {};
+    Object.entries(this.tracks).forEach(([key, track]) => {
+      saved[key] = {
+        pattern: [...track.pattern],
+        muted: track.muted,
+        volume: track.volume,
+      };
+    });
+    this.patternBank[this.activePattern] = { numSteps: this.numSteps, tracks: saved };
+    // Load target
+    this.activePattern = index;
+    const target = this.patternBank[index];
+    if (target) {
+      this.numSteps = target.numSteps;
+      Object.entries(target.tracks).forEach(([key, data]) => {
+        if (this.tracks[key]) {
+          this.tracks[key].pattern = [...data.pattern];
+          this.tracks[key].muted = data.muted;
+          this.tracks[key].volume = data.volume;
+        }
+      });
+    } else {
+      this.initTracks();
+    }
+    this.buildUI();
+    this.buildPatternBankUI();
+    if (window.presetManager) presetManager.autoSave();
+  }
+
+  buildPatternBankUI() {
+    const titleEl = document.querySelector('#center-tab-drums .panel-title');
+    if (!titleEl) return;
+    let bankDiv = titleEl.querySelector('.pattern-bank');
+    if (!bankDiv) {
+      bankDiv = document.createElement('div');
+      bankDiv.className = 'pattern-bank';
+      titleEl.appendChild(bankDiv);
+    }
+    bankDiv.innerHTML = '';
+    for (let i = 0; i < 8; i++) {
+      const btn = document.createElement('button');
+      btn.className = 'pattern-btn' + (i === this.activePattern ? ' active' : '');
+      btn.textContent = i + 1;
+      btn.addEventListener('click', () => this.switchPattern(i));
+      bankDiv.appendChild(btn);
+    }
+  }
+
   init() {
     this.buildUI();
+    this.buildPatternBankUI();
   }
 
   buildUI() {

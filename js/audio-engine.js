@@ -67,7 +67,13 @@ class AudioEngine {
     // Master gain
     this.masterGain = this.ctx.createGain();
     this.masterGain.gain.value = this.params.masterVol;
-    this.masterGain.connect(this.ctx.destination);
+
+    // Effects chain insert point: masterGain → fxInput → [effects] → fxOutput → destination
+    this.fxInput = this.ctx.createGain();
+    this.fxOutput = this.ctx.createGain();
+    this.masterGain.connect(this.fxInput);
+    this.fxInput.connect(this.fxOutput); // bypass by default
+    this.fxOutput.connect(this.ctx.destination);
 
     // Filter
     this.filter = this.ctx.createBiquadFilter();

@@ -15,6 +15,13 @@ class StepSequencer {
     this.steps = [];
     this.resetSteps(this.numSteps);
 
+    // Pattern bank (8 slots)
+    this.activePattern = 0;
+    this.patternBank = [];
+    for (let i = 0; i < 8; i++) {
+      this.patternBank.push(null); // lazy init
+    }
+
     // UI elements
     this.ledElements = [];
     this.btnElements = [];
@@ -76,15 +83,61 @@ class StepSequencer {
     document.getElementById('btn-steps-32')?.classList.toggle('active', count === 32);
   }
 
+  // ===== PATTERN BANK =====
+  switchPattern(index) {
+    if (index === this.activePattern) return;
+    // Save current pattern
+    this.patternBank[this.activePattern] = {
+      numSteps: this.numSteps,
+      steps: this.steps.map(s => ({ ...s })),
+    };
+    // Load target pattern
+    this.activePattern = index;
+    const saved = this.patternBank[index];
+    if (saved) {
+      this.numSteps = saved.numSteps;
+      this.steps = saved.steps.map(s => ({ ...s }));
+    } else {
+      this.resetSteps(this.numSteps);
+    }
+    this.buildUI();
+    this.bindControls();
+    this.updateUI();
+    if (window.presetManager) presetManager.autoSave();
+  }
+
+  buildPatternBankUI() {
+    const titleEl = document.querySelector('#sequencer-section .panel-title');
+    if (!titleEl) return;
+    let bankDiv = titleEl.querySelector('.pattern-bank');
+    if (!bankDiv) {
+      bankDiv = document.createElement('div');
+      bankDiv.className = 'pattern-bank';
+      titleEl.appendChild(bankDiv);
+    }
+    bankDiv.innerHTML = '';
+    for (let i = 0; i < 8; i++) {
+      const btn = document.createElement('button');
+      btn.className = 'pattern-btn' + (i === this.activePattern ? ' active' : '');
+      btn.textContent = i + 1;
+      btn.addEventListener('click', () => this.switchPattern(i));
+      bankDiv.appendChild(btn);
+    }
+  }
+
   init() {
     this.buildUI();
     this.bindControls();
+    this.buildPatternBankUI();
   }
 
   buildUI() {
     const ledRow = document.getElementById('step-leds');
     const btnRow = document.getElementById('step-buttons');
     if (!ledRow || !btnRow) return;
+
+    this.ledElements = [];
+    this.btnElements = [];
 
     ledRow.innerHTML = '';
     btnRow.innerHTML = '';

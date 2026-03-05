@@ -26,6 +26,8 @@ class PresetManager {
       state.sequencer = {
         numSteps: stepSequencer.numSteps,
         steps: stepSequencer.steps.map(s => ({ ...s })),
+        activePattern: stepSequencer.activePattern,
+        patternBank: stepSequencer.patternBank.map(p => p ? { numSteps: p.numSteps, steps: p.steps.map(s => ({ ...s })) } : null),
       };
     }
 
@@ -34,6 +36,8 @@ class PresetManager {
       state.drums = {
         numSteps: drumMachine.numSteps,
         tracks: {},
+        activePattern: drumMachine.activePattern,
+        patternBank: drumMachine.patternBank.map(p => p ? JSON.parse(JSON.stringify(p)) : null),
       };
       Object.entries(drumMachine.tracks).forEach(([key, track]) => {
         state.drums.tracks[key] = {
@@ -51,6 +55,8 @@ class PresetManager {
         masterVolume: vcoLoop.masterVolume,
         continuousMode: vcoLoop.continuousMode || false,
         curves: {},
+        activePattern: vcoLoop.activePattern,
+        patternBank: vcoLoop.patternBank.map(p => p ? JSON.parse(JSON.stringify(p)) : null),
       };
       Object.entries(vcoLoop.curves).forEach(([key, curve]) => {
         state.vcoLoop.curves[key] = {
@@ -72,6 +78,11 @@ class PresetManager {
       };
     }
 
+    // Effects Engine
+    if (window.effectsEngine) {
+      state.effects = effectsEngine.collectState();
+    }
+
     return state;
   }
 
@@ -87,7 +98,12 @@ class PresetManager {
     if (state.sequencer && window.stepSequencer) {
       stepSequencer.numSteps = state.sequencer.numSteps;
       stepSequencer.steps = state.sequencer.steps.map(s => ({ ...s }));
+      if (state.sequencer.patternBank) {
+        stepSequencer.activePattern = state.sequencer.activePattern || 0;
+        stepSequencer.patternBank = state.sequencer.patternBank.map(p => p ? { numSteps: p.numSteps, steps: p.steps.map(s => ({ ...s })) } : null);
+      }
       stepSequencer.setStepCount(state.sequencer.numSteps);
+      stepSequencer.buildPatternBankUI();
     }
 
     // Drums
@@ -100,7 +116,12 @@ class PresetManager {
           drumMachine.tracks[key].volume = saved.volume;
         }
       });
+      if (state.drums.patternBank) {
+        drumMachine.activePattern = state.drums.activePattern || 0;
+        drumMachine.patternBank = state.drums.patternBank.map(p => p ? JSON.parse(JSON.stringify(p)) : null);
+      }
       drumMachine.buildUI();
+      drumMachine.buildPatternBankUI();
     }
 
     // VCO Loop
@@ -115,7 +136,12 @@ class PresetManager {
           vcoLoop.curves[key].points = saved.points.map(p => ({ x: p.x, y: p.y }));
         }
       });
+      if (state.vcoLoop.patternBank) {
+        vcoLoop.activePattern = state.vcoLoop.activePattern || 0;
+        vcoLoop.patternBank = state.vcoLoop.patternBank.map(p => p ? JSON.parse(JSON.stringify(p)) : null);
+      }
       vcoLoop.drawCurve();
+      vcoLoop.buildPatternBankUI();
       // Update wave button UI
       document.querySelectorAll('.vco-wave-btn').forEach(b => {
         b.classList.toggle('active', b.dataset.wave === vcoLoop.waveType);
@@ -142,6 +168,11 @@ class PresetManager {
       drawingMode.buildSlotTabs();
       drawingMode.redrawCanvas();
       drawingMode.updateWaveformPreview();
+    }
+
+    // Effects Engine
+    if (state.effects && window.effectsEngine) {
+      effectsEngine.applyState(state.effects);
     }
 
     return true;

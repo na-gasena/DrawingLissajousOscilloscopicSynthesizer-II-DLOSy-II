@@ -43,11 +43,91 @@ class VCOLoop {
     this.stepDuration = 0; // ms per bar
     this.lastStepIndex = 0;
     this.lastTotalSteps = 16;
+
+    // Pattern bank (8 slots)
+    this.activePattern = 0;
+    this.patternBank = [];
+    for (let i = 0; i < 8; i++) {
+      this.patternBank.push(null);
+    }
+  }
+
+  // ===== PATTERN BANK =====
+  switchPattern(index) {
+    if (index === this.activePattern) return;
+    // Save current curves
+    const saved = {};
+    Object.entries(this.curves).forEach(([key, curve]) => {
+      saved[key] = curve.points.map(p => ({ x: p.x, y: p.y }));
+    });
+    this.patternBank[this.activePattern] = {
+      waveType: this.waveType,
+      masterVolume: this.masterVolume,
+      continuousMode: this.continuousMode,
+      curves: saved
+    };
+    // Load target
+    this.activePattern = index;
+    const target = this.patternBank[index];
+    if (target) {
+      this.waveType = target.waveType;
+      this.masterVolume = target.masterVolume;
+      this.continuousMode = target.continuousMode;
+      Object.entries(target.curves).forEach(([key, points]) => {
+        if (this.curves[key]) {
+          this.curves[key].points = points.map(p => ({ x: p.x, y: p.y }));
+        }
+      });
+    } else {
+      // Reset to defaults
+      this.curves.frequency.points = [{x:0, y:0.3}, {x:0.5, y:0.6}, {x:1, y:0.3}];
+      this.curves.cutoff.points = [{x:0, y:0.7}, {x:1, y:0.7}];
+      Object.keys(this.curves).forEach(k => {
+        if (k !== 'frequency' && k !== 'cutoff') {
+          this.curves[k].points = [{x:0, y:0.5}, {x:1, y:0.5}];
+        }
+      });
+    }
+    this.drawCurve();
+    this.buildPatternBankUI();
+    // Update wave buttons
+    document.querySelectorAll('.vco-wave-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.wave === this.waveType);
+    });
+    const volSlider = document.getElementById('vco-vol-slider');
+    if (volSlider) volSlider.value = Math.round(this.masterVolume * 100);
+    if (window.presetManager) presetManager.autoSave();
+  }
+
+  buildPatternBankUI() {
+    const panel = document.getElementById('vco-loop-panel');
+    if (!panel) return;
+    let bankDiv = panel.querySelector('.pattern-bank');
+    if (!bankDiv) {
+      // Insert after the first header element
+      const header = panel.querySelector('.panel-title') || panel.querySelector('.vco-header');
+      bankDiv = document.createElement('div');
+      bankDiv.className = 'pattern-bank';
+      if (header) {
+        header.appendChild(bankDiv);
+      } else {
+        panel.insertBefore(bankDiv, panel.firstChild);
+      }
+    }
+    bankDiv.innerHTML = '';
+    for (let i = 0; i < 8; i++) {
+      const btn = document.createElement('button');
+      btn.className = 'pattern-btn' + (i === this.activePattern ? ' active' : '');
+      btn.textContent = i + 1;
+      btn.addEventListener('click', () => this.switchPattern(i));
+      bankDiv.appendChild(btn);
+    }
   }
 
   init() {
     this.buildUI();
     this.bindControls();
+    this.buildPatternBankUI();
   }
 
   // ===== AUDIO =====

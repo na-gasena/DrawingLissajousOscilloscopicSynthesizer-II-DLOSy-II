@@ -35,8 +35,10 @@ DLOSy20/
 │   ├── adsr-editor.js         ← ADSR曲線ビジュアルエディタ
 │   ├── midi-out.js            ← MIDI OUT (Web MIDI API)
 │   ├── vco-loop.js            ← VCO Loop 曲線エディタ
-│   ├── drawing-mode.js        ← Drawing Mode 描画→波形変換（8スロット）
+│   ├── drawing-mode.js        ← Drawing Mode 描画→波形変換（8/16スロット）
 │   ├── unim-search.js         ← Unim Unicode検索 → Drawing Mode連携
+│   ├── effects-engine.js      ← 音声/波形エフェクトエンジン (Web Audio API)
+│   ├── preset-manager.js      ← 状態・パターンの保存/復元 (localStorage/JSON)
 │   └── app.js                 ← メイン初期化スクリプト
 └── Doc/
     └── architecture.md        ← 本ドキュメント
@@ -64,6 +66,11 @@ graph TD
         ADSR["adsr-editor.js<br/>(ビジュアルADSR管理)"]
         VCO["vco-loop.js<br/>(曲線エディタ / 連続パラメータ)"]
         DRAW["drawing-mode.js<br/>(Canvas描画 → LR波形)"]
+        FX["effects-engine.js<br/>(Audio & Waveform Effects)"]
+    end
+
+    subgraph "State & Data"
+        PM["preset-manager.js<br/>(Save/Load & Pattern Banks)"]
     end
 
     subgraph "External Integration"
@@ -86,16 +93,18 @@ graph TD
     APP --> ADSR
     APP --> MIDI
     APP --> UNIM
+    APP --> FX
+    APP --> PM
 
     UI --> AE
     UI --> SS
 
     SS --> AE
-    SS --> DM
-    SS --> VCO
-
+    SS --> PM
     DM --> AE
     DM --> MIDI
+    DM --> PM
+    VCO --> PM
 
     ADSR --> AE
 
@@ -126,7 +135,8 @@ graph LR
     subgraph "エフェクト"
         ADSR_ENV["ADSR Envelope"]
         FLT["BiquadFilter (LPF)"]
-        DLY["Delay + Feedback"]
+        DLY_SEND["Delay (Send)"]
+        FX_CHAIN["effects-engine.js<br/>Distort, BitCrush, Smooth(LPF), Wobble,<br/>Rotate, Scale, Ripple, Stereo, VectorCancel"]
     end
 
     MASTER["Master Gain"]
@@ -137,8 +147,8 @@ graph LR
     DRUMS --> MASTER
 
     FLT --> MASTER
-    FLT --> DLY --> MASTER
-    MASTER --> OUT
+    FLT --> DLY_SEND --> MASTER
+    MASTER --> FX_CHAIN --> OUT
 ```
 
 ---
@@ -218,36 +228,45 @@ python -m http.server 3000
 
 ## UIレイアウト
 
-### メインパネル構成
+### 画面構成 (100vh Flex / Grid)
 
-- **LEFT**: SYNTH（波形選択、ADSR、オクターブ、エフェクト）
-- **CENTER**: タブ切り替え
-  - **SEQUENCER タブ**: Step Sequencer + Keyboard
-  - **DRUMS タブ**: 6トラック Drum Machine（グリッド左 + ノブ右）+ MIDI OUT
-  - **Unim Glyph Search**: タブ外に配置（常時表示）
+画面全体（`100vh`）にフィットし、各パネル内で個別にスクロール(`overflow-y: auto`)するレイアウト設計。
+
+- **LEFT (260px)**: SYNTH パネル（波形選択、ADSR、オクターブ等）
+- **CENTER (1fr)**: タブ切り替え（横スクロール禁止 `overflow-x: hidden`）
+  - **SEQUENCER タブ**: Step Sequencer (16/32step切替) + Keyboard
+  - **DRUMS タブ**: 6トラック Drum Machine + MIDI OUT設定
+  - **Unim Glyph Search**: 中央上部に常時表示
+- **RIGHT (280px)**: EFFECTS パネル
+  - 10種類のエフェクト（ON/OFFトグル＋パラメータスライダー）をスクロールで管理
 - **BOTTOM**: VCO Loop（STEP/CONT切替）+ Drawing Mode（8/16スロット切替）
 
-### プリセット管理
+### プリセット・パターン管理
 
-- ヘッダーに 💾 SAVE / 📂 LOAD ボタン
-- `localStorage` 自動保存（2秒デバウンス）+ JSONファイルエクスポート/インポート
+- **全体保存 (Preset Manager)**
+  - ヘッダーに 💾 SAVE / 📂 LOAD ボタン（JSONエクスポート/インポート）
+  - `localStorage` による自動保存（2秒遅延のデバウンス処理）
+- **パターンバンク (Pattern Bank)**
+  - `SEQUENCER`, `DRUMS`, `VCO LOOP` の各モジュールに **8つのパターンスロット** (`[1]`〜`[8]`) を保有
+  - バンク切り替え時に現在のパターンを自動保存し、対象スロットのパターンを即座に復元。演奏中でもシームレスに切り替え可能。
 
 ---
 
 ## 主要モジュール概要
 
-| モジュール          | 責務                                     | グローバル変数名 |
-| ------------------- | ---------------------------------------- | ---------------- |
-| `audio-engine.js`   | AudioContext管理、シンセ/ドラム音源作成  | `audioEngine`    |
-| `adsr-editor.js`    | エンベロープ曲線のビジュアル編集         | `adsrEditor`     |
-| `step-sequencer.js` | 16/32ステップの記録・同期再生            | `stepSequencer`  |
-| `drum-machine.js`   | 6トラックのドラムパターン・一括制御      | `drumMachine`    |
-| `midi-out.js`       | Web MIDI API を介した外部出力管理        | `midiOut`        |
-| `vco-loop.js`       | 8パラメータ曲線エディタ                  | `vcoLoop`        |
-| `drawing-mode.js`   | 波形描画キャンバス（8/16スロット）       | `drawingMode`    |
-| `unim-search.js`    | Unim Unicode検索・グリフ適用             | `unimSearch`     |
-| `preset-manager.js` | プリセット保存/読込（localStorage+JSON） | `presetManager`  |
-| `app.js`            | 全モジュールの初期化                     | —                |
+| モジュール          | 責務                                    | グローバル変数名 |
+| ------------------- | --------------------------------------- | ---------------- |
+| `audio-engine.js`   | AudioContext管理、シンセ/ドラム音源作成 | `audioEngine`    |
+| `effects-engine.js` | 10種のエフェクト処理とAudioNode管理     | `effectsEngine`  |
+| `adsr-editor.js`    | エンベロープ曲線のビジュアル編集        | `adsrEditor`     |
+| `step-sequencer.js` | 16/32ステップの記録・同期再生           | `stepSequencer`  |
+| `drum-machine.js`   | 6トラックのドラムパターン・一括制御     | `drumMachine`    |
+| `midi-out.js`       | Web MIDI API を介した外部出力管理       | `midiOut`        |
+| `vco-loop.js`       | 8パラメータ曲線エディタ                 | `vcoLoop`        |
+| `drawing-mode.js`   | 波形描画キャンバス（8/16スロット切替）  | `drawingMode`    |
+| `unim-search.js`    | Unim Unicode検索・グリフ適用            | `unimSearch`     |
+| `preset-manager.js` | プリセット保存/読込・パターンバンク管理 | `presetManager`  |
+| `app.js`            | 全モジュールの初期化                    | —                |
 
 ---
 

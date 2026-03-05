@@ -34,6 +34,11 @@ document.addEventListener('DOMContentLoaded', () => {
     unimSearch.init();
   }
 
+  // Initialize Effects Engine
+  if (window.effectsEngine) {
+    effectsEngine.init();
+  }
+
   // Initialize Preset Manager (save/load)
   if (window.presetManager) {
     presetManager.init();
@@ -58,6 +63,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const initAudio = async () => {
     await audioEngine.init();
     audioEngine.resume();
+    // Initialize effects audio nodes after audio context is ready
+    if (window.effectsEngine) {
+      effectsEngine.initAudioNodes();
+    }
     document.removeEventListener('click', initAudio);
     document.removeEventListener('touchstart', initAudio);
     console.log('Audio context started');
