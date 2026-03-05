@@ -11,11 +11,6 @@ class VCOLoop {
     this.masterVolume = 0.3;
     this.fadeDuration = 0.2; // seconds
 
-    // Drawing slot sequencing for VCO Loop
-    this.drawSlotSeqEnabled = false;
-    this.drawSlotPattern = new Array(16).fill(0); // slot index per step
-    this.currentDrawSlot = 0;
-
     // Curve data: each parameter has an array of control points
     // Points: { x: 0-1 (time normalized), y: 0-1 (value normalized) }
     this.curves = {
@@ -237,17 +232,6 @@ class VCOLoop {
     if (!this.enabled) return;
     this.playheadPosition = stepIndex / totalSteps;
     this.applyAtPosition(this.playheadPosition);
-
-    // Drawing slot sequencing: switch slot on each step
-    if (this.drawSlotSeqEnabled && this.waveType === 'drawing' && this.isOscRunning) {
-      const patIdx = stepIndex % this.drawSlotPattern.length;
-      const targetSlot = this.drawSlotPattern[patIdx];
-      if (targetSlot !== this.currentDrawSlot && window.drawingMode) {
-        this.currentDrawSlot = targetSlot;
-        drawingMode.activeSlot = targetSlot;
-        this.switchDrawBuffer(targetSlot);
-      }
-    }
   }
 
   onPlayStart() {

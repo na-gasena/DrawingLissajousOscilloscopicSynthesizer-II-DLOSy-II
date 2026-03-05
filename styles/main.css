@@ -511,6 +511,55 @@ body {
   cursor: pointer;
 }
 
+/* VCO Draw Slot Sequencing */
+.vco-draw-seq-panel {
+  margin-top: 8px;
+  padding: 6px;
+  border-top: 1px solid var(--border-panel);
+}
+
+.vco-draw-seq-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.vco-draw-seq-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-secondary);
+}
+
+.vco-draw-seq-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  opacity: 0.4;
+  max-width: calc(16 * 26px);
+}
+
+.vco-draw-seq-cell {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  background: var(--btn-surface);
+  border: 1px solid var(--border-panel);
+  color: var(--text-secondary);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.1s;
+}
+
+.vco-draw-seq-cell:hover {
+  border-color: var(--accent-secondary);
+  color: var(--accent-secondary);
+}
+
 /* ===== KEYBOARD ===== */
 #keyboard-section {
   padding: 8px 0;
@@ -1015,4 +1064,12 @@ body {
     width: 24px;
     height: 50px;
   }
+}
+
+/* ===== Active toggle state (shared) ===== */
+.vco-on {
+  background: var(--accent-secondary) !important;
+  color: #000 !important;
+  border-color: var(--accent-secondary) !important;
+  font-weight: bold;
 }

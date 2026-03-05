@@ -19,6 +19,7 @@ class DrawingMode {
     ];
     this.activeSlot = 0;
     this.isDrawing = false;
+    this.autoSlotCycle = false; // Auto-cycle through slots on each step
 
     // Canvas
     this.canvas = null;
@@ -49,6 +50,7 @@ class DrawingMode {
       <div class="panel-title">
         DRAWING MODE
         <div class="draw-header-controls">
+          <button id="draw-auto-cycle" class="small-btn">AUTO CYCLE</button>
           <button id="draw-preview-btn" class="small-btn">♪ PREVIEW</button>
           <button id="draw-clear-btn" class="small-btn">CLEAR</button>
         </div>
@@ -131,6 +133,32 @@ class DrawingMode {
     document.getElementById('draw-preview-btn')?.addEventListener('click', () => {
       this.togglePreview();
     });
+
+    // Auto-cycle ON/OFF toggle
+    document.getElementById('draw-auto-cycle')?.addEventListener('click', () => {
+      this.autoSlotCycle = !this.autoSlotCycle;
+      const btn = document.getElementById('draw-auto-cycle');
+      if (btn) {
+        btn.classList.toggle('vco-on', this.autoSlotCycle);
+      }
+    });
+  }
+
+  // Advance to next slot (called from step sequencer on each step tick)
+  advanceSlot() {
+    if (!this.autoSlotCycle) return;
+    this.activeSlot = (this.activeSlot + 1) % this.slots.length;
+    // Update UI tabs
+    document.querySelectorAll('.draw-slot-tab').forEach((t, idx) => {
+      t.classList.toggle('active', idx === this.activeSlot);
+    });
+    this.redrawCanvas();
+    this.updateWaveformPreview();
+
+    // Switch VCO Loop audio buffer if running in drawing mode
+    if (window.vcoLoop && vcoLoop.isOscRunning && vcoLoop.isDrawingOsc) {
+      vcoLoop.switchDrawBuffer(this.activeSlot);
+    }
   }
 
   // ===== DRAWING =====

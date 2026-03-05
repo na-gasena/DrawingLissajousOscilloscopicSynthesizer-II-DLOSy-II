@@ -293,6 +293,11 @@ class StepSequencer {
       drumMachine.playStep(this.currentStep);
     }
 
+    // Auto-cycle Drawing slots (Draw 1→2→…→8→1)
+    if (window.drawingMode) {
+      drawingMode.advanceSlot();
+    }
+
     // Sync: update VCO Loop playhead and apply parameters
     if (window.vcoLoop) {
       vcoLoop.onStepTick(this.currentStep, this.numSteps);
