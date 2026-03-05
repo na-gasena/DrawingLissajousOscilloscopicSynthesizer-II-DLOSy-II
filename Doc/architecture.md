@@ -141,20 +141,24 @@ graph LR
 
 ## MIDI 仕様 (MIDI OUT)
 
-ドラムマシンの各ステップは、再生時に MIDI Ch 10 を通じて外部にノート信号を送信できます。
+Korg Volca Drum 対応のチャンネル分離方式で、各ドラムパートが個別の MIDI チャンネルで送信されます。
 
-| パート  | MIDI Note (GM) | 名称          |
-| ------- | -------------- | ------------- |
-| **BD**  | 36             | Bass Drum 1   |
-| **SD**  | 38             | Snare Drum 1  |
-| **CHH** | 42             | Closed Hi-Hat |
-| **OHH** | 46             | Open Hi-Hat   |
-| **CLP** | 39             | Hand Clap     |
-| **RIM** | 37             | Side Stick    |
+| DLOSy20 パート | MIDI Ch | Volca Drum Part |
+| -------------- | ------- | --------------- |
+| **BD**         | Ch 1    | Part 1          |
+| **SD**         | Ch 2    | Part 2          |
+| **CHH**        | Ch 3    | Part 3          |
+| **OHH**        | Ch 4    | Part 4          |
+| **CLP**        | Ch 5    | Part 5          |
+| **RIM**        | Ch 6    | Part 6          |
 
-- **チャンネル**: 10 (固定)
-- **ベロシティ**: 100 (固定)
+- **ノート番号**: 60（固定。Volca Drum はノート番号を無視）
+- **ベロシティ**: 100
+- **Note Off**: 50ms 後に自動送信
 - **接続**: ブラウザ経由での MIDI デバイス列挙・選択が可能
+
+> [!NOTE]
+> Web MIDI API は HTTPS または localhost でのみ動作します（Chrome推奨）。
 
 ---
 

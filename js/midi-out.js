@@ -9,18 +9,19 @@ class MidiOut {
     this.enabled = false;
     this.midiAccess = null;
     this.selectedOutput = null;
-    this.channel = 10; // MIDI channel 10 (drums, 0-indexed = 9)
 
-    // GM Standard drum note mapping
-    this.drumNoteMap = {
-      bd:  36, // Bass Drum 1
-      sd:  38, // Snare Drum 1
-      chh: 42, // Closed Hi-Hat
-      ohh: 46, // Open Hi-Hat
-      clp: 39, // Hand Clap
-      rim: 37, // Side Stick / Rimshot
+    // Korg Volca Drum style: each part = separate MIDI channel
+    // Channel 1-6 = Parts 1-6 (0-indexed: 0-5)
+    this.drumChannelMap = {
+      bd:  0, // Part 1 → Ch 1
+      sd:  1, // Part 2 → Ch 2
+      chh: 2, // Part 3 → Ch 3
+      ohh: 3, // Part 4 → Ch 4
+      clp: 4, // Part 5 → Ch 5
+      rim: 5, // Part 6 → Ch 6
     };
 
+    this.noteNumber = 60; // Fixed note (Volca Drum ignores note number)
     this.velocity = 100;
   }
 
@@ -103,18 +104,17 @@ class MidiOut {
     if (el) el.textContent = text;
   }
 
-  // Send MIDI Note On for a drum hit
+  // Send MIDI Note On for a drum hit (channel-per-part style)
   sendDrumNote(trackKey) {
     if (!this.enabled || !this.selectedOutput) return;
 
-    const note = this.drumNoteMap[trackKey];
-    if (note === undefined) return;
+    const channel = this.drumChannelMap[trackKey];
+    if (channel === undefined) return;
 
-    const channel = 9; // Channel 10 (0-indexed)
-    // Note On
-    this.selectedOutput.send([0x90 | channel, note, this.velocity]);
+    // Note On: 0x90 | channel
+    this.selectedOutput.send([0x90 | channel, this.noteNumber, this.velocity]);
     // Note Off after 50ms
-    this.selectedOutput.send([0x80 | channel, note, 0], window.performance.now() + 50);
+    this.selectedOutput.send([0x80 | channel, this.noteNumber, 0], window.performance.now() + 50);
   }
 
   // Send MIDI Note On for a synth note (channel 1)

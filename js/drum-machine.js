@@ -161,14 +161,14 @@ class DrumMachine {
       if (!track || track.muted) return;
       if (!track.pattern[stepIndex]) return;
 
-      // Play audio
-      if (audioEngine[def.playMethod]) {
-        audioEngine[def.playMethod]();
-      }
-
-      // Send MIDI
-      if (window.midiOut) {
+      // MIDI OUT mode: send MIDI only, skip Web Audio
+      if (window.midiOut && midiOut.enabled) {
         midiOut.sendDrumNote(def.key);
+      } else {
+        // Play audio locally
+        if (audioEngine[def.playMethod]) {
+          audioEngine[def.playMethod]();
+        }
       }
     });
   }
