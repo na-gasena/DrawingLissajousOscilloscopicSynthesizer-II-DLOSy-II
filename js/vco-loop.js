@@ -464,10 +464,8 @@ class VCOLoop {
     if (!this.canvas) return;
     this.ctx2d = this.canvas.getContext('2d');
 
-    // Resize canvas to container
-    const rect = this.canvas.parentElement.getBoundingClientRect();
-    this.canvas.width = Math.max(rect.width - 2, 400);
-    this.canvas.height = 160;
+    // Sync canvas internal resolution to its CSS display size
+    this.syncCanvasSize();
 
     this.draggingPoint = null;
 
@@ -477,7 +475,28 @@ class VCOLoop {
     this.canvas.addEventListener('mouseleave', () => this.onCanvasMouseUp());
     this.canvas.addEventListener('dblclick', (e) => this.onCanvasDoubleClick(e));
 
+    // Auto-resize canvas when container changes size
+    if (window.ResizeObserver) {
+      this._resizeObserver = new ResizeObserver(() => {
+        this.syncCanvasSize();
+        this.drawCurve();
+      });
+      this._resizeObserver.observe(this.canvas.parentElement);
+    }
+
     this.drawCurve();
+  }
+
+  syncCanvasSize() {
+    if (!this.canvas) return;
+    const rect = this.canvas.getBoundingClientRect();
+    const displayW = Math.max(Math.round(rect.width), 200);
+    const displayH = Math.max(Math.round(rect.height), 80);
+    // Only update if size actually changed (avoid infinite loop)
+    if (this.canvas.width !== displayW || this.canvas.height !== displayH) {
+      this.canvas.width = displayW;
+      this.canvas.height = displayH;
+    }
   }
 
   bindControls() {
@@ -664,11 +683,16 @@ class VCOLoop {
 
   getCanvasCoords(e) {
     const rect = this.canvas.getBoundingClientRect();
+    // Use CSS display dimensions (rect), not internal canvas resolution
+    const scaleX = this.canvas.width / rect.width;
+    const scaleY = this.canvas.height / rect.height;
     const pad = 8;
-    const w = this.canvas.width - pad * 2;
-    const h = this.canvas.height - pad * 2;
-    const x = Math.max(0, Math.min(1, (e.clientX - rect.left - pad) / w));
-    const y = Math.max(0, Math.min(1, 1 - (e.clientY - rect.top - pad) / h));
+    const padCSSx = pad / scaleX;
+    const padCSSy = pad / scaleY;
+    const w = rect.width - padCSSx * 2;
+    const h = rect.height - padCSSy * 2;
+    const x = Math.max(0, Math.min(1, (e.clientX - rect.left - padCSSx) / w));
+    const y = Math.max(0, Math.min(1, 1 - (e.clientY - rect.top - padCSSy) / h));
     return { x, y };
   }
 

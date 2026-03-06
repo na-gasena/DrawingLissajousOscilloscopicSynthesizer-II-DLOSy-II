@@ -213,7 +213,7 @@ class DrumMachine {
     });
   }
 
-  playStep(stepIndex) {
+  playStep(stepIndex, midiTimestamp) {
     if (!this.enabled) return; // Master OFF check
 
     this.trackDefs.forEach(def => {
@@ -221,14 +221,14 @@ class DrumMachine {
       if (!track || track.muted) return;
       if (!track.pattern[stepIndex]) return;
 
-      // MIDI OUT mode: send MIDI only, skip Web Audio
+      // Play audio locally
+      if (audioEngine[def.playMethod]) {
+        audioEngine[def.playMethod](track.volume);
+      }
+
+      // Also send MIDI OUT if enabled (with precise timestamp)
       if (window.midiOut && midiOut.enabled) {
-        midiOut.sendDrumNote(def.key);
-      } else {
-        // Play audio locally
-        if (audioEngine[def.playMethod]) {
-          audioEngine[def.playMethod]();
-        }
+        midiOut.sendDrumNote(def.key, midiTimestamp);
       }
     });
   }

@@ -263,12 +263,19 @@ class StepSequencer {
       vcoLoop.onPlayStart();
     }
 
-    this.scheduleNext();
+    // MIDI CLK sync: don't start internal scheduler, wait for MIDI Start/Clock
+    if (window.cvClock && cvClock.enabled) {
+      return;
+    }
+
+    // Internal mode: lookahead scheduler
+    this._nextStepTime = audioEngine.ctx.currentTime;
+    this._startLookahead();
   }
 
   stop() {
     this.isPlaying = false;
-    clearTimeout(this.timerId);
+    this._stopLookahead();
 
     const playBtn = document.getElementById('btn-play');
     if (playBtn) {
@@ -285,29 +292,67 @@ class StepSequencer {
     this.ledElements.forEach(led => led.classList.remove('current'));
   }
 
-  scheduleNext() {
-    if (!this.isPlaying) return;
+  // --- Lookahead Scheduler ---
+  // Uses setInterval (25ms) to check audioContext.currentTime
+  // and fires steps at the correct audio-clock moment.
+  _startLookahead() {
+    this._stopLookahead();
+    const LOOKAHEAD_MS = 25;   // how often to check (ms)
+    const SCHEDULE_AHEAD = 0.05; // how far ahead to schedule (seconds)
 
-    // EXT CV mode: do not self-schedule, wait for cvClock.onTick()
-    if (window.cvClock && cvClock.mode === 'ext') return;
+    this._lookaheadId = setInterval(() => {
+      if (!this.isPlaying) return;
 
+      // MIDI CLK sync: do not self-schedule
+      if (window.cvClock && cvClock.enabled) return;
+
+      const now = audioEngine.ctx.currentTime;
+      while (this._nextStepTime < now + SCHEDULE_AHEAD) {
+        this._fireStep(this._nextStepTime);
+        this._advanceStep();
+      }
+    }, LOOKAHEAD_MS);
+  }
+
+  _stopLookahead() {
+    if (this._lookaheadId) {
+      clearInterval(this._lookaheadId);
+      this._lookaheadId = null;
+    }
+  }
+
+  _fireStep(audioTime) {
+    // Calculate the performance.now() timestamp for MIDI scheduling
+    const now = audioEngine.ctx.currentTime;
+    const perfNow = performance.now();
+    const offsetMs = Math.max(0, (audioTime - now) * 1000);
+    const midiTimestamp = perfNow + offsetMs;
+
+    this.playCurrentStep(midiTimestamp);
+    this.updatePlaybackUI();
+  }
+
+  _advanceStep() {
     const bpm = audioEngine.params.tempo;
-    const stepDuration = (60 / bpm) * 1000 / 4; // 16th notes
+    const stepDuration = 60 / bpm / 4; // seconds per 16th note
     const swing = audioEngine.params.swing || 0;
 
-    // Apply swing to even steps
-    let delay = stepDuration;
+    let duration = stepDuration;
     if (this.currentStep % 2 === 1) {
-      delay += (swing / 100) * stepDuration * 0.5;
+      duration += (swing / 100) * stepDuration * 0.5;
     }
 
-    this.playCurrentStep();
-    this.updatePlaybackUI();
+    this._nextStepTime += duration;
+    this.currentStep = (this.currentStep + 1) % this.numSteps;
+  }
 
-    this.timerId = setTimeout(() => {
-      this.currentStep = (this.currentStep + 1) % this.numSteps;
-      this.scheduleNext();
-    }, delay);
+  // Legacy method kept for backwards compatibility
+  scheduleNext() {
+    // Now handled by lookahead scheduler
+    if (!this.isPlaying) return;
+    if (window.cvClock && cvClock.enabled) return;
+    // If somehow called directly, just start the lookahead
+    this._startLookahead();
   }
 
   // Called by CVClock on each external pulse
@@ -318,7 +363,7 @@ class StepSequencer {
     this.currentStep = (this.currentStep + 1) % this.numSteps;
   }
 
-  playCurrentStep() {
+  playCurrentStep(midiTimestamp) {
     const step = this.steps[this.currentStep];
     if (step.on && step.freq > 0) {
       if (step.waveType === 'drawing' && window.drawingMode) {
@@ -354,7 +399,7 @@ class StepSequencer {
 
     // Trigger drums
     if (window.drumMachine) {
-      drumMachine.playStep(this.currentStep);
+      drumMachine.playStep(this.currentStep, midiTimestamp);
     }
 
     // Auto-cycle Drawing slots (Draw 1→2→…→8→1)

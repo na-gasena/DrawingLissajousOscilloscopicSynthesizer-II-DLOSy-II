@@ -23,6 +23,9 @@ class MidiOut {
 
     this.noteNumber = 60; // Fixed note (Volca Drum ignores note number)
     this.velocity = 100;
+
+    // Latency compensation: negative = send earlier, positive = send later
+    this.latencyCompMs = 0; // -100 to +100 ms
   }
 
   async init() {
@@ -57,6 +60,11 @@ class MidiOut {
         </select>
         <span id="midi-status" class="midi-status">Off</span>
       </div>
+      <div class="midi-out-controls midi-latency-row">
+        <span class="cv-label">TIMING</span>
+        <input type="range" id="midi-latency-slider" min="-100" max="100" step="1" value="0" class="fx-slider">
+        <span id="midi-latency-val" class="cv-val">0ms</span>
+      </div>
     `;
 
     document.getElementById('midi-toggle')?.addEventListener('click', () => {
@@ -75,6 +83,13 @@ class MidiOut {
       } else {
         this.selectedOutput = null;
       }
+    });
+
+    // Latency compensation slider
+    document.getElementById('midi-latency-slider')?.addEventListener('input', (e) => {
+      this.latencyCompMs = parseInt(e.target.value);
+      const valEl = document.getElementById('midi-latency-val');
+      if (valEl) valEl.textContent = this.latencyCompMs + 'ms';
     });
   }
 
@@ -105,16 +120,21 @@ class MidiOut {
   }
 
   // Send MIDI Note On for a drum hit (channel-per-part style)
-  sendDrumNote(trackKey) {
+  sendDrumNote(trackKey, midiTimestamp) {
     if (!this.enabled || !this.selectedOutput) return;
 
     const channel = this.drumChannelMap[trackKey];
     if (channel === undefined) return;
 
-    // Note On: 0x90 | channel
-    this.selectedOutput.send([0x90 | channel, this.noteNumber, this.velocity]);
-    // Note Off after 50ms
-    this.selectedOutput.send([0x80 | channel, this.noteNumber, 0], window.performance.now() + 50);
+    // Use precise timestamp for scheduling (0 = send immediately)
+    // Apply latency compensation
+    let t = midiTimestamp || performance.now();
+    t += this.latencyCompMs;
+
+    // Note On at exact scheduled time
+    this.selectedOutput.send([0x90 | channel, this.noteNumber, this.velocity], t);
+    // Note Off 50ms later
+    this.selectedOutput.send([0x80 | channel, this.noteNumber, 0], t + 50);
   }
 
   // Send MIDI Note On for a synth note (channel 1)

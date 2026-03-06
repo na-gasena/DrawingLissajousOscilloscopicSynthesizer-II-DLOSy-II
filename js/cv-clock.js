@@ -1,175 +1,173 @@
 /**
- * DLOSy20 - CV Clock Sync
- * Detect CV clock pulses from audio input (e.g. Korg SQ1 SYNC OUT)
- * and synchronize the step sequencer / drum machine.
+ * DLOSy20 - MIDI Clock Sync
+ * Synchronize step sequencer to external MIDI Clock (0xF8 @ 24 PPQN).
+ * When enabled, Play/Stop is driven by MIDI Start/Stop messages,
+ * and step advancement is driven by MIDI timing clock pulses.
  */
 
-class CVClock {
+class MidiClockSync {
   constructor() {
-    this.mode = 'internal'; // 'internal' | 'ext'
-    this.stream = null;
-    this.sourceNode = null;
-    this.analyser = null;
-    this.detectorRAF = null;
+    this.enabled = false;
+    this.midiAccess = null;
+    this.midiInput = null;
 
-    // Pulse detection
-    this.threshold = 0.3;
-    this.wasAbove = false;
+    // MIDI Clock: 24 PPQN → 6 clocks per sixteenth note
+    this.clockCount = 0;
+    this.clocksPerStep = 6;
 
-    // BPM calculation (rolling average of last 8 intervals)
-    this.pulseTimes = [];
-    this.maxPulses = 8;
+    // BPM detection from clock intervals
+    this.clockTimes = [];
+    this.maxClockSamples = 24; // 1 beat worth of clocks for averaging
     this.detectedBPM = 0;
-
-    // Audio input device
-    this.selectedDeviceId = '';
   }
 
   async init() {
     this.buildUI();
   }
 
-  // ===== AUDIO INPUT =====
+  // ===== MIDI ACCESS =====
 
-  async enumerateInputs() {
-    try {
-      // Need permission first (Chrome requires getUserMedia before enumerateDevices returns labels)
-      const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      tempStream.getTracks().forEach(t => t.stop());
-
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const audioInputs = devices.filter(d => d.kind === 'audioinput');
-      return audioInputs;
-    } catch (e) {
-      console.warn('CVClock: cannot enumerate audio inputs:', e);
-      return [];
-    }
-  }
-
-  async startListening() {
-    if (this.stream) this.stopListening();
-
-    try {
-      const constraints = {
-        audio: this.selectedDeviceId
-          ? { deviceId: { exact: this.selectedDeviceId } }
-          : true,
-      };
-      this.stream = await navigator.mediaDevices.getUserMedia(constraints);
-
-      const ctx = audioEngine.ctx;
-      this.sourceNode = ctx.createMediaStreamSource(this.stream);
-      this.analyser = ctx.createAnalyser();
-      this.analyser.fftSize = 256;
-      this.sourceNode.connect(this.analyser);
-      // Do not connect analyser to destination (we don't want to hear the click)
-
-      this.pulseTimes = [];
-      this.wasAbove = false;
-      this.runDetector();
-      this.updateStatus('Listening...');
-    } catch (e) {
-      console.warn('CVClock: failed to start:', e);
-      this.updateStatus('Error: ' + e.message);
-    }
-  }
-
-  stopListening() {
-    if (this.detectorRAF) {
-      cancelAnimationFrame(this.detectorRAF);
-      this.detectorRAF = null;
-    }
-    if (this.sourceNode) {
-      try { this.sourceNode.disconnect(); } catch(e) {}
-      this.sourceNode = null;
-    }
-    if (this.stream) {
-      this.stream.getTracks().forEach(t => t.stop());
-      this.stream = null;
-    }
-    this.analyser = null;
-    this.updateStatus('Stopped');
-  }
-
-  // ===== PULSE DETECTION =====
-
-  runDetector() {
-    if (!this.analyser) return;
-
-    const bufLen = this.analyser.fftSize;
-    const buffer = new Float32Array(bufLen);
-
-    const detect = () => {
-      if (!this.analyser) return;
-      this.detectorRAF = requestAnimationFrame(detect);
-
-      this.analyser.getFloatTimeDomainData(buffer);
-
-      // Find peak amplitude in this frame
-      let peak = 0;
-      for (let i = 0; i < bufLen; i++) {
-        const abs = Math.abs(buffer[i]);
-        if (abs > peak) peak = abs;
+  async connectMIDI() {
+    // Share from midiOut or midiIn
+    if (window.midiOut && midiOut.midiAccess) {
+      this.midiAccess = midiOut.midiAccess;
+    } else if (window.midiIn && midiIn.midiAccess) {
+      this.midiAccess = midiIn.midiAccess;
+    } else {
+      if (!navigator.requestMIDIAccess) {
+        this.updateStatus('MIDI N/A');
+        return;
       }
-
-      // Rising edge detection
-      const isAbove = peak > this.threshold;
-      if (isAbove && !this.wasAbove) {
-        this.onPulseDetected();
+      try {
+        this.midiAccess = await navigator.requestMIDIAccess();
+      } catch (e) {
+        this.updateStatus('Denied');
+        return;
       }
-      this.wasAbove = isAbove;
-    };
-
-    detect();
+    }
+    this.populateInputs();
+    this.midiAccess.addEventListener('statechange', () => this.populateInputs());
   }
 
-  onPulseDetected() {
+  attachInput(deviceId) {
+    // Detach previous
+    if (this.midiInput) {
+      this.midiInput.onmidimessage = null;
+      this.midiInput = null;
+    }
+    if (!this.midiAccess || !deviceId) return;
+
+    this.midiInput = this.midiAccess.inputs.get(deviceId);
+    if (this.midiInput) {
+      this.midiInput.onmidimessage = (e) => this.onMessage(e);
+      this.updateStatus('Ready');
+    }
+  }
+
+  // ===== MIDI CLOCK MESSAGE HANDLING =====
+
+  onMessage(e) {
+    if (!this.enabled) return;
+    const status = e.data[0];
+
+    switch (status) {
+      case 0xF8: // Timing Clock (24 PPQN)
+        this.onTimingClock();
+        break;
+
+      case 0xFA: // Start
+        this.clockCount = 0;
+        this.clockTimes = [];
+        // Start the sequencer from the beginning
+        if (window.stepSequencer) {
+          stepSequencer.currentStep = 0;
+          stepSequencer.isPlaying = true;
+          const playBtn = document.getElementById('btn-play');
+          if (playBtn) {
+            playBtn.classList.add('playing');
+            const icon = playBtn.querySelector('.play-icon');
+            if (icon) icon.textContent = '■';
+          }
+          if (window.vcoLoop) vcoLoop.onPlayStart();
+          stepSequencer._stopLookahead(); // disable internal scheduler
+        }
+        this.updateStatus('▶ Synced');
+        break;
+
+      case 0xFB: // Continue
+        if (window.stepSequencer) {
+          stepSequencer.isPlaying = true;
+          stepSequencer._stopLookahead();
+        }
+        this.updateStatus('▶ Synced');
+        break;
+
+      case 0xFC: // Stop
+        if (window.stepSequencer) {
+          stepSequencer.isPlaying = false;
+          stepSequencer._stopLookahead();
+          const playBtn = document.getElementById('btn-play');
+          if (playBtn) {
+            playBtn.classList.remove('playing');
+            const icon = playBtn.querySelector('.play-icon');
+            if (icon) icon.textContent = '▶';
+          }
+          stepSequencer.ledElements.forEach(led => led.classList.remove('current'));
+          if (window.vcoLoop) vcoLoop.onPlayStop();
+        }
+        this.updateStatus('■ Stopped');
+        break;
+    }
+  }
+
+  onTimingClock() {
+    // BPM detection from clock intervals
     const now = performance.now();
-    this.pulseTimes.push(now);
-
-    // Keep only recent pulses
-    if (this.pulseTimes.length > this.maxPulses) {
-      this.pulseTimes.shift();
+    this.clockTimes.push(now);
+    if (this.clockTimes.length > this.maxClockSamples) {
+      this.clockTimes.shift();
     }
 
-    // Calculate BPM from intervals
-    if (this.pulseTimes.length >= 2) {
-      let totalInterval = 0;
-      let count = 0;
-      for (let i = 1; i < this.pulseTimes.length; i++) {
-        totalInterval += this.pulseTimes[i] - this.pulseTimes[i - 1];
-        count++;
+    // Calculate BPM: 24 clocks = 1 beat
+    if (this.clockTimes.length >= 2) {
+      let total = 0;
+      for (let i = 1; i < this.clockTimes.length; i++) {
+        total += this.clockTimes[i] - this.clockTimes[i - 1];
       }
-      const avgInterval = totalInterval / count; // ms per pulse
-      // Assume each pulse = 1 sixteenth note (same as step sequencer)
-      // BPM = 60000 / (avgInterval * 4)  (4 sixteenth notes per beat)
-      this.detectedBPM = Math.round(60000 / (avgInterval * 4));
+      const avgClockMs = total / (this.clockTimes.length - 1);
+      // 1 beat = 24 clocks → BPM = 60000 / (avgClockMs * 24)
+      this.detectedBPM = Math.round(60000 / (avgClockMs * 24));
       this.updateBPMDisplay();
     }
 
-    // Tick the sequencer and drum machine
-    if (this.mode === 'ext') {
+    // Step advancement: every 6 clocks = 1 sixteenth note
+    this.clockCount++;
+    if (this.clockCount >= this.clocksPerStep) {
+      this.clockCount = 0;
+
       if (window.stepSequencer && stepSequencer.isPlaying) {
-        stepSequencer.externalTick();
-      }
-      if (window.drumMachine && drumMachine.enabled) {
-        // drumMachine is driven by stepSequencer, so externalTick handles it
+        stepSequencer.playCurrentStep();
+        stepSequencer.updatePlaybackUI();
+        stepSequencer.currentStep = (stepSequencer.currentStep + 1) % stepSequencer.numSteps;
       }
     }
   }
 
-  // ===== MODE SWITCHING =====
+  // ===== ENABLE / DISABLE =====
 
-  setMode(mode) {
-    this.mode = mode;
-    if (mode === 'ext') {
-      this.startListening();
+  setEnabled(on) {
+    this.enabled = on;
+    if (on) {
+      if (!this.midiAccess) this.connectMIDI();
+      this.updateStatus('Waiting...');
     } else {
-      this.stopListening();
+      this.updateStatus('Off');
+      // If sequencer was running externally, stop it
+      if (window.stepSequencer && stepSequencer.isPlaying) {
+        // Re-enable internal scheduler if user presses play again
+      }
     }
-    // Update UI
-    document.getElementById('cv-mode-internal')?.classList.toggle('active', mode === 'internal');
-    document.getElementById('cv-mode-ext')?.classList.toggle('active', mode === 'ext');
+    document.getElementById('midi-clk-toggle')?.classList.toggle('midi-active', on);
   }
 
   // ===== UI =====
@@ -181,75 +179,73 @@ class CVClock {
     container.innerHTML = `
       <div class="cv-clock-controls">
         <div class="cv-clock-row">
-          <span class="cv-label">CLOCK</span>
-          <button id="cv-mode-internal" class="small-btn active">INT</button>
-          <button id="cv-mode-ext" class="small-btn">EXT CV</button>
-        </div>
-        <div class="cv-clock-row">
-          <select id="cv-input-select" class="midi-select">
-            <option value="">-- Audio Input --</option>
+          <span class="cv-label">SYNC</span>
+          <button id="midi-clk-toggle" class="small-btn">MIDI CLK</button>
+          <select id="midi-clk-input-select" class="midi-select">
+            <option value="">-- MIDI Input --</option>
           </select>
         </div>
         <div class="cv-clock-row">
-          <span class="cv-label">THRESH</span>
-          <input type="range" id="cv-threshold" min="0.05" max="0.9" step="0.05" value="0.3" class="fx-slider">
-          <span id="cv-threshold-val" class="cv-val">0.30</span>
-        </div>
-        <div class="cv-clock-row">
           <span class="cv-label">BPM</span>
-          <span id="cv-bpm-display" class="cv-val cv-bpm">---</span>
-          <span id="cv-status" class="cv-status">Off</span>
+          <span id="midi-clk-bpm" class="cv-val cv-bpm">---</span>
+          <span id="midi-clk-status" class="cv-status">Off</span>
         </div>
       </div>
     `;
 
-    // Mode buttons
-    document.getElementById('cv-mode-internal')?.addEventListener('click', () => this.setMode('internal'));
-    document.getElementById('cv-mode-ext')?.addEventListener('click', () => this.setMode('ext'));
-
-    // Threshold slider
-    document.getElementById('cv-threshold')?.addEventListener('input', (e) => {
-      this.threshold = parseFloat(e.target.value);
-      const valEl = document.getElementById('cv-threshold-val');
-      if (valEl) valEl.textContent = this.threshold.toFixed(2);
+    // Toggle
+    document.getElementById('midi-clk-toggle')?.addEventListener('click', () => {
+      this.setEnabled(!this.enabled);
     });
 
-    // Input select
-    document.getElementById('cv-input-select')?.addEventListener('change', (e) => {
-      this.selectedDeviceId = e.target.value;
-      if (this.mode === 'ext') {
-        this.startListening(); // restart with new device
-      }
+    // Input device select
+    document.getElementById('midi-clk-input-select')?.addEventListener('change', (e) => {
+      this.attachInput(e.target.value);
     });
-
-    // Populate input devices
-    this.populateInputs();
   }
 
-  async populateInputs() {
-    const select = document.getElementById('cv-input-select');
-    if (!select) return;
-
-    const inputs = await this.enumerateInputs();
-    select.innerHTML = '<option value="">-- Audio Input --</option>';
-    inputs.forEach(dev => {
+  populateInputs() {
+    const select = document.getElementById('midi-clk-input-select');
+    if (!select || !this.midiAccess) return;
+    select.innerHTML = '<option value="">-- MIDI Input --</option>';
+    this.midiAccess.inputs.forEach(input => {
       const opt = document.createElement('option');
-      opt.value = dev.deviceId;
-      opt.textContent = dev.label || `Input ${dev.deviceId.slice(0, 8)}`;
+      opt.value = input.id;
+      opt.textContent = input.name || `Input ${input.id}`;
       select.appendChild(opt);
     });
+    // Auto-select first
+    if (this.midiAccess.inputs.size > 0 && !this.midiInput) {
+      const first = this.midiAccess.inputs.values().next().value;
+      this.attachInput(first.id);
+      select.value = first.id;
+    }
   }
 
   updateBPMDisplay() {
-    const el = document.getElementById('cv-bpm-display');
+    const el = document.getElementById('midi-clk-bpm');
     if (el) el.textContent = this.detectedBPM || '---';
+
+    // Also update the main tempo display / knob if synced
+    if (this.enabled && this.detectedBPM > 0 && window.audioEngine) {
+      audioEngine.params.tempo = this.detectedBPM;
+      // Update knob UI
+      const tempoKnob = document.getElementById('knob-tempo');
+      if (tempoKnob) {
+        tempoKnob.dataset.value = String(this.detectedBPM);
+        // Re-render knob if uiComponents is available
+        if (window.uiComponents && uiComponents.renderKnob) {
+          uiComponents.renderKnob(tempoKnob);
+        }
+      }
+    }
   }
 
   updateStatus(text) {
-    const el = document.getElementById('cv-status');
+    const el = document.getElementById('midi-clk-status');
     if (el) el.textContent = text;
   }
 }
 
-// Global instance
-window.cvClock = new CVClock();
+// Global instance (replaces old cvClock)
+window.cvClock = new MidiClockSync();
