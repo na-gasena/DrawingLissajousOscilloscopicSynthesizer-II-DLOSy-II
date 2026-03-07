@@ -17,11 +17,8 @@ class VCOLoop {
       frequency:  { points: [{x:0, y:0.3}, {x:0.5, y:0.6}, {x:1, y:0.3}], min: 65, max: 2000, label: 'FREQ', log: true },
       cutoff:     { points: [{x:0, y:0.7}, {x:1, y:0.7}], min: 100, max: 5000, label: 'CUTOFF', log: true },
       resonance:  { points: [{x:0, y:0.2}, {x:1, y:0.2}], min: 0, max: 30, label: 'RES' },
-      attack:     { points: [{x:0, y:0.05}, {x:1, y:0.05}], min: 0.001, max: 0.5, label: 'ATK' },
-      decay:      { points: [{x:0, y:0.3}, {x:1, y:0.3}], min: 0.01, max: 1.0, label: 'DEC' },
-      sustain:    { points: [{x:0, y:0.5}, {x:1, y:0.5}], min: 0, max: 1, label: 'SUS' },
-      release:    { points: [{x:0, y:0.2}, {x:1, y:0.2}], min: 0.01, max: 2.0, label: 'REL' },
       volume:     { points: [{x:0, y:0.5}, {x:1, y:0.5}], min: 0, max: 1, label: 'VOL' },
+      adsr:       { points: [{x:0, y:0}, {x:0.05, y:1}, {x:0.2, y:0.6}, {x:0.8, y:0.6}, {x:1, y:0}], min: 0, max: 1, label: 'ADSR', stepOnly: true },
     };
 
     this.activeParam = 'frequency';
@@ -281,7 +278,10 @@ class VCOLoop {
     }
     this.filter.frequency.value = cutoff;
     this.filter.Q.value = res;
-    this.gain.gain.value = vol * this.masterVolume;
+    // In STEP mode, gain is controlled by ADSR envelope (_fireStepADSR)
+    if (this.continuousMode) {
+      this.gain.gain.value = vol * this.masterVolume;
+    }
   }
 
   // Convert normalized value (0-1) to actual parameter value
@@ -341,9 +341,39 @@ class VCOLoop {
         this.stepDuration = (60000 / bpm) / 4; // per-step duration in ms
       }
     } else {
-      // STEP mode: discrete update
+      // STEP mode: discrete update with ADSR envelope
       this.playheadPosition = stepIndex / totalSteps;
       this.applyAtPosition(this.playheadPosition);
+      this._fireStepADSR(stepIndex, totalSteps);
+    }
+  }
+
+  _fireStepADSR(stepIndex, totalSteps) {
+    if (!this.gain || !this.isOscRunning) return;
+    const ctx = audioEngine.ctx;
+    const now = ctx.currentTime;
+
+    const vol = this.getValueAt('volume', stepIndex / totalSteps) * this.masterVolume;
+
+    // Calculate step duration
+    const bpm = (window.stepSequencer && stepSequencer.bpm) || 120;
+    const stepDur = (60 / bpm) / 4;
+
+    // Cancel previous ramps
+    this.gain.gain.cancelScheduledValues(now);
+
+    // Sample the ADSR curve at multiple points and schedule gain
+    const numSamples = 16;
+    for (let i = 0; i <= numSamples; i++) {
+      const t = i / numSamples; // 0-1 within step
+      const envVal = this.getValueAt('adsr', t); // 0-1 envelope value
+      const gainVal = Math.max(0.001, envVal * vol);
+      const time = now + t * stepDur;
+      if (i === 0) {
+        this.gain.gain.setValueAtTime(gainVal, time);
+      } else {
+        this.gain.gain.linearRampToValueAtTime(gainVal, time);
+      }
     }
   }
 
@@ -444,6 +474,9 @@ class VCOLoop {
     tabContainer.innerHTML = '';
 
     Object.entries(this.curves).forEach(([key, curve]) => {
+      // Hide stepOnly tabs in CONT mode
+      if (curve.stepOnly && this.continuousMode) return;
+
       const tab = document.createElement('button');
       tab.className = 'vco-param-tab' + (key === this.activeParam ? ' active' : '');
       tab.textContent = curve.label;
@@ -533,6 +566,14 @@ class VCOLoop {
         const mode = e.target.dataset.mode;
         this.continuousMode = (mode === 'cont');
 
+        // Show/hide ADSR tab (STEP mode only)
+        // If switching to CONT while ADSR tab is selected, fall back to frequency
+        if (this.continuousMode && this.curves[this.activeParam]?.stepOnly) {
+          this.activeParam = 'frequency';
+        }
+        this.buildParamTabs();
+        this.drawCurve();
+
         if (this.isOscRunning) {
           if (this.continuousMode) {
             this.startContinuousLoop();
@@ -542,6 +583,7 @@ class VCOLoop {
         }
       }
     });
+
 
     // VCO Volume slider
     document.getElementById('vco-vol-slider')?.addEventListener('input', (e) => {
@@ -553,7 +595,12 @@ class VCOLoop {
 
     document.getElementById('vco-reset-curve')?.addEventListener('click', () => {
       const curve = this.curves[this.activeParam];
-      curve.points = [{x: 0, y: 0.5}, {x: 1, y: 0.5}];
+      if (this.activeParam === 'adsr') {
+        // Restore default ADSR shape
+        curve.points = [{x:0, y:0}, {x:0.05, y:1}, {x:0.2, y:0.6}, {x:0.8, y:0.6}, {x:1, y:0}];
+      } else {
+        curve.points = [{x: 0, y: 0.5}, {x: 1, y: 0.5}];
+      }
       this.drawCurve();
     });
 

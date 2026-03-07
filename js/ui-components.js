@@ -255,6 +255,10 @@ class UIComponents {
     const pressedKeys = new Set();
 
     document.addEventListener('keydown', (e) => {
+      // Skip synth keyboard when ARP tab is active
+      const arpTab = document.getElementById('center-tab-arp');
+      if (arpTab && arpTab.classList.contains('active')) return;
+
       const k = e.key.toLowerCase();
       if (allMap[k] && !pressedKeys.has(k)) {
         pressedKeys.add(k);
@@ -278,6 +282,10 @@ class UIComponents {
     });
 
     document.addEventListener('keyup', (e) => {
+      // Skip synth keyboard when ARP tab is active
+      const arpTab = document.getElementById('center-tab-arp');
+      if (arpTab && arpTab.classList.contains('active')) return;
+
       const k = e.key.toLowerCase();
       if (allMap[k]) {
         pressedKeys.delete(k);

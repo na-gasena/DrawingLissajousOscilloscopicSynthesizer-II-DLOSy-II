@@ -54,6 +54,16 @@ document.addEventListener('DOMContentLoaded', () => {
     presetManager.init();
   }
 
+  // Initialize Audio Settings
+  if (window.audioSettings) {
+    audioSettings.init();
+  }
+
+  // Initialize Arpeggiator
+  if (window.arpeggiator) {
+    arpeggiator.init();
+  }
+
   // Center panel tab switching (Sequencer / Drums)
   document.querySelectorAll('.center-tab').forEach(tab => {
     tab.addEventListener('click', () => {
