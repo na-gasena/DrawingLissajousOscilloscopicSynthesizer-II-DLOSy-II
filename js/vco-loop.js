@@ -468,6 +468,41 @@ class VCOLoop {
     this.initCanvas();
   }
 
+  // ===== CURVE PRESETS =====
+  static get CURVE_PRESETS() {
+    return {
+      flat:     { label: '━━', points: [{x:0, y:0.5}, {x:1, y:0.5}] },
+      rampUp:   { label: '╱',  points: [{x:0, y:0}, {x:1, y:1}] },
+      rampDown: { label: '╲',  points: [{x:0, y:1}, {x:1, y:0}] },
+      triangle: { label: '╱╲', points: [{x:0, y:0}, {x:0.5, y:1}, {x:1, y:0}] },
+      sine:     { label: '∿',  points: [{x:0, y:0.5}, {x:0.15, y:0.93}, {x:0.35, y:1}, {x:0.5, y:0.5}, {x:0.65, y:0.07}, {x:0.85, y:0}, {x:1, y:0.5}] },
+      square:   { label: '▁▇', points: [{x:0, y:0}, {x:0.001, y:1}, {x:0.5, y:1}, {x:0.501, y:0}, {x:1, y:0}] },
+      expo:     { label: '⌒',  points: [{x:0, y:0}, {x:0.2, y:0.04}, {x:0.5, y:0.25}, {x:0.8, y:0.64}, {x:1, y:1}] },
+      random:   { label: '🎲', points: null }, // generated at runtime
+    };
+  }
+
+  applyPreset(presetName) {
+    const preset = VCOLoop.CURVE_PRESETS[presetName];
+    if (!preset) return;
+    const curve = this.curves[this.activeParam];
+    if (!curve) return;
+
+    if (presetName === 'random') {
+      // Generate random curve: 6-10 points
+      const numPts = 6 + Math.floor(Math.random() * 5);
+      const pts = [{x: 0, y: Math.random()}];
+      for (let i = 1; i < numPts - 1; i++) {
+        pts.push({ x: i / (numPts - 1), y: Math.random() });
+      }
+      pts.push({x: 1, y: Math.random()});
+      curve.points = pts;
+    } else {
+      curve.points = preset.points.map(p => ({x: p.x, y: p.y}));
+    }
+    this.drawCurve();
+  }
+
   buildParamTabs() {
     const tabContainer = document.getElementById('vco-param-tabs');
     if (!tabContainer) return;
@@ -488,6 +523,23 @@ class VCOLoop {
         this.drawCurve();
       });
       tabContainer.appendChild(tab);
+    });
+
+    // Preset buttons row
+    let presetRow = tabContainer.parentElement.querySelector('.vco-presets');
+    if (!presetRow) {
+      presetRow = document.createElement('div');
+      presetRow.className = 'vco-presets';
+      tabContainer.parentElement.insertBefore(presetRow, tabContainer.nextSibling);
+    }
+    presetRow.innerHTML = '';
+    Object.entries(VCOLoop.CURVE_PRESETS).forEach(([name, preset]) => {
+      const btn = document.createElement('button');
+      btn.className = 'vco-preset-btn';
+      btn.textContent = preset.label;
+      btn.title = name;
+      btn.addEventListener('click', () => this.applyPreset(name));
+      presetRow.appendChild(btn);
     });
   }
 

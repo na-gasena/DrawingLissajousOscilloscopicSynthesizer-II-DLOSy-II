@@ -572,8 +572,21 @@ class Arpeggiator {
   drawAdsrCurve() {
     if (!this.adsrCanvas || !this.adsrCtx2d) return;
     const ctx = this.adsrCtx2d;
-    const w = this.adsrCanvas.width;
-    const h = this.adsrCanvas.height;
+
+    // Sync internal resolution to CSS display size (prevent stretch)
+    const dpr = window.devicePixelRatio || 1;
+    const rect = this.adsrCanvas.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) {
+      const cw = Math.round(rect.width * dpr);
+      const ch = Math.round(rect.height * dpr);
+      if (this.adsrCanvas.width !== cw || this.adsrCanvas.height !== ch) {
+        this.adsrCanvas.width = cw;
+        this.adsrCanvas.height = ch;
+        ctx.scale(dpr, dpr);
+      }
+    }
+    const w = rect.width || this.adsrCanvas.width;
+    const h = rect.height || this.adsrCanvas.height;
 
     ctx.clearRect(0, 0, w, h);
 

@@ -101,6 +101,12 @@ document.addEventListener('DOMContentLoaded', () => {
     // ARP enabled: auto-activate when ARP tab is active
     if (window.arpeggiator) {
       arpeggiator.enabled = (target === 'arp');
+      // Redraw ARP ADSR canvas after tab becomes visible (resize sync)
+      if (target === 'arp') {
+        requestAnimationFrame(() => {
+          if (arpeggiator.drawAdsrCurve) arpeggiator.drawAdsrCurve();
+        });
+      }
     }
   }
 
@@ -119,6 +125,12 @@ document.addEventListener('DOMContentLoaded', () => {
       onCenterTabSwitch(tabs[nextIdx].dataset.tab);
     }
   });
+
+  // Initialize left panel state based on initial center tab
+  const initialCenterTab = document.querySelector('.center-tab.active');
+  if (initialCenterTab) {
+    onCenterTabSwitch(initialCenterTab.dataset.tab);
+  }
 
   // First click / touch to init audio context
   const initAudio = async () => {

@@ -492,81 +492,123 @@ body {
   text-align: center;
 }
 
-.step-led-row {
+/* ===== STEP SEQUENCER — Integrated Pad UI ===== */
+.step-pad-row {
   display: flex;
-  gap: 4px;
-  margin-bottom: 6px;
+  gap: 3px;
   justify-content: center;
+  flex-wrap: wrap;
+  max-width: calc(16 * 48px);
+  margin: 0 auto 8px;
 }
 
-.step-led {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--led-off);
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.5);
-  transition: all 0.1s;
-}
-
-.step-led.active {
-  background: var(--led-step);
-  box-shadow: 0 0 8px rgba(245, 166, 35, 0.7);
-}
-
-.step-led.current {
-  background: var(--accent-green);
-  box-shadow: 0 0 10px rgba(68, 214, 44, 0.8);
-}
-
-.step-button-row {
+.step-pad {
+  flex: 0 0 calc(100% / 16 - 3px);
+  max-width: 46px;
+  min-width: 24px;
+  height: 52px;
   display: flex;
-  gap: 4px;
-  justify-content: center;
-}
-
-.step-btn {
-  width: 36px;
-  height: 32px;
-  font-family: var(--font-mono);
-  font-size: 9px;
+  flex-direction: column;
+  align-items: center;
   background: var(--btn-surface);
   border: 1px solid var(--border-panel);
+  border-radius: 4px;
+  cursor: ns-resize;
+  user-select: none;
+  position: relative;
+  transition: border-color 0.1s, background 0.1s, box-shadow 0.1s;
+}
+
+.step-pad .pad-led {
+  width: 100%;
+  height: 4px;
+  border-radius: 4px 4px 0 0;
+  background: transparent;
+  transition: background 0.1s;
+}
+
+.step-pad.on .pad-led {
+  background: var(--led-step);
+  box-shadow: 0 0 4px rgba(245, 166, 35, 0.5);
+}
+
+.step-pad.current .pad-led {
+  background: var(--accent-green) !important;
+  box-shadow: 0 0 6px rgba(68, 214, 44, 0.7);
+}
+
+.step-pad .pad-note {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-family: var(--font-mono);
   color: var(--text-secondary);
-  cursor: pointer;
-  border-radius: 3px;
-  transition: all 0.1s;
+  pointer-events: none;
 }
 
-.step-btn:hover {
-  border-color: var(--accent-primary);
-}
-
-.step-btn.on {
-  background: var(--accent-primary);
+.step-pad.on .pad-note {
   color: #fff;
+  font-weight: bold;
+}
+
+.step-pad .pad-num {
+  font-size: 7px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  opacity: 0.4;
+  padding-bottom: 2px;
+  pointer-events: none;
+}
+
+.step-pad.on {
+  background: var(--accent-primary);
   border-color: var(--accent-primary);
-  box-shadow: 0 0 6px rgba(232, 69, 69, 0.3);
+  box-shadow: 0 0 4px rgba(232, 69, 69, 0.25);
 }
 
-/* Edit cursor highlight */
-.step-led.editing {
-  background: #00e5ff;
-  box-shadow: 0 0 8px rgba(0, 229, 255, 0.7);
-}
-
-.step-btn.editing {
+.step-pad.editing {
   border-color: #00e5ff;
   box-shadow: 0 0 6px rgba(0, 229, 255, 0.4);
 }
 
-/* DEL button */
-.btn-del {
-  color: #e84545 !important;
-  border-color: #e84545 !important;
+.step-pad.dragging {
+  border-color: #f5a623;
+  box-shadow: 0 0 8px rgba(245, 166, 35, 0.5);
 }
 
-.btn-del:hover {
-  background: rgba(232, 69, 69, 0.2) !important;
+.step-pad:hover {
+  border-color: var(--accent-primary);
+}
+
+/* Drag tooltip */
+.step-pad-tooltip {
+  position: fixed;
+  background: rgba(0, 0, 0, 0.92);
+  color: #f5a623;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: bold;
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid #f5a623;
+  pointer-events: none;
+  z-index: 200;
+  transform: translate(-50%, -130%);
+  white-space: nowrap;
+}
+
+/* Scale select */
+.seq-scale-select {
+  background: var(--btn-surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border-panel);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  cursor: pointer;
 }
 
 /* Step count toggle */
@@ -576,27 +618,37 @@ body {
   border-color: var(--accent-primary);
 }
 
-.seq-separator {
-  color: var(--text-secondary);
-  margin: 0 2px;
-  font-size: 12px;
-}
-
-/* Auto-sizing for 32 steps: wrap into 2 rows of 16 */
-.step-led-row, .step-button-row {
+/* ===== VCO LOOP Curve Presets ===== */
+.vco-presets {
+  display: flex;
+  gap: 3px;
+  padding: 2px 0 4px;
   flex-wrap: wrap;
-  max-width: calc(16 * 40px); /* 16 steps per row */
-  margin: 0 auto;
 }
 
-.step-btn {
-  min-width: 20px;
-  flex: 0 0 calc(100% / 16 - 4px);
-  max-width: 36px;
+.vco-preset-btn {
+  width: auto;
+  min-width: 28px;
+  height: 24px;
+  padding: 0 6px;
+  font-size: 13px;
+  background: var(--btn-surface);
+  border: 1px solid var(--border-panel);
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: 3px;
+  transition: all 0.1s;
+  font-family: var(--font-mono);
 }
 
-.step-led {
-  flex: 0 0 auto;
+.vco-preset-btn:hover {
+  border-color: var(--accent-primary);
+  color: var(--text-primary);
+}
+
+.vco-preset-btn:active {
+  background: var(--accent-primary);
+  color: #fff;
 }
 
 /* Drum grid also wraps at 16 */
@@ -1826,25 +1878,30 @@ body {
 .left-tab {
   flex: 1;
   background: var(--bg-dark);
-  color: var(--text-dim);
+  color: var(--text-secondary);
   border: 1px solid var(--border);
-  border-bottom: none;
-  padding: 4px 8px;
+  border-bottom: 2px solid transparent;
+  padding: 6px 8px;
   font-family: var(--font-display);
-  font-size: 10px;
+  font-size: 11px;
+  letter-spacing: 1.5px;
   cursor: pointer;
   border-radius: 4px 4px 0 0;
   transition: all 0.15s;
+  text-align: center;
 }
 
 .left-tab.active {
   background: var(--bg-panel);
-  color: var(--accent);
-  border-color: var(--accent);
+  color: var(--accent-primary);
+  border-color: var(--accent-primary);
+  border-bottom: 2px solid var(--accent-primary);
 }
 
 .left-tab:hover:not(.active) {
-  color: var(--text);
+  color: var(--text-primary);
+  border-bottom: 2px solid var(--text-secondary);
+  background: rgba(255,255,255,0.03);
 }
 
 .left-tab-content {
@@ -1864,9 +1921,11 @@ body {
 }
 
 .preset-settings-panel .small-btn {
+  width: auto;
   font-size: 10px;
   padding: 4px 10px;
   letter-spacing: 1px;
+  white-space: nowrap;
 }
 
 .preset-settings-panel .preset-status {
@@ -1884,6 +1943,12 @@ body {
   flex-wrap: wrap;
 }
 
+.arp-adsr-editor .small-btn {
+  width: auto;
+  padding: 0 8px;
+  white-space: nowrap;
+}
+
 .arp-adsr-editor canvas {
   background: #0a0a0a;
   border: 1px solid var(--border);
@@ -1892,5 +1957,38 @@ body {
   flex: 1;
   min-width: 180px;
   height: 80px;
+}
+
+/* ===== MIDI IN PANEL (Settings Tab) ===== */
+.midi-in-controls {
+  padding: 4px 0;
+}
+
+.midi-in-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+
+.midi-in-row .midi-select {
+  flex: 1;
+  min-width: 100px;
+}
+
+.midi-in-row .small-btn {
+  width: auto;
+  padding: 0 8px;
+  white-space: nowrap;
+}
+
+/* ===== CV CLOCK PANEL (Settings Tab) ===== */
+#cv-clock-panel .cv-clock-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 4px;
+  flex-wrap: wrap;
 }
 

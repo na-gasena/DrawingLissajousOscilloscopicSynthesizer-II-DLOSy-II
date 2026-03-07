@@ -1,7 +1,31 @@
 /**
  * DLOSy20 - Step Sequencer
- * 16/32 step sequencer with step recording
+ * 16/32 step sequencer with integrated pad UI and vertical drag note editing
  */
+
+// ===== Note Table (C2-C6) =====
+const SEQ_NOTES = [];
+const SEQ_NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+for (let oct = 2; oct <= 6; oct++) {
+  SEQ_NOTE_NAMES.forEach(n => {
+    const midi = (oct + 1) * 12 + SEQ_NOTE_NAMES.indexOf(n);
+    SEQ_NOTES.push({ name: `${n}${oct}`, freq: 440 * Math.pow(2, (midi - 69) / 12), midi });
+  });
+}
+const SEQ_DEFAULT_NOTE_IDX = SEQ_NOTES.findIndex(n => n.name === 'C4'); // 24
+
+// ===== Scale Definitions =====
+const SCALES = {
+  major:       [0, 2, 4, 5, 7, 9, 11],
+  minor:       [0, 2, 3, 5, 7, 8, 10],
+  pentatonic:  [0, 2, 4, 7, 9],
+  minorPenta:  [0, 3, 5, 7, 10],
+  blues:       [0, 3, 5, 6, 7, 10],
+  dorian:      [0, 2, 3, 5, 7, 9, 10],
+  mixolydian:  [0, 2, 4, 5, 7, 9, 10],
+  wholeTone:   [0, 2, 4, 6, 8, 10],
+  chromatic:   [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+};
 
 class StepSequencer {
   constructor() {
@@ -23,8 +47,16 @@ class StepSequencer {
     }
 
     // UI elements
-    this.ledElements = [];
-    this.btnElements = [];
+    this.padElements = [];
+
+    // Drag state (ui-study Drag.ts pattern)
+    this._dragIndex = -1;
+    this._dragStartY = 0;
+    this._dragStartNoteIdx = 0;
+    this._dragMoved = false;
+    this._tooltip = null;
+    this._boundPadMouseMove = this._padMouseMove.bind(this);
+    this._boundPadMouseUp = this._padMouseUp.bind(this);
   }
 
   // Initialize/reset step data for given count
@@ -67,11 +99,8 @@ class StepSequencer {
     this.editStep = Math.min(this.editStep, count - 1);
 
     // Rebuild UI (preserves playback)
-    this.ledElements = [];
-    this.btnElements = [];
+    this.padElements = [];
     this.buildUI();
-    // Re-bind only the step buttons (buildUI creates new button elements)
-    // Note: transport/controls are bound once in init(), only step click handlers need rebinding
 
     // Sync drums
     if (window.drumMachine) {
@@ -132,35 +161,44 @@ class StepSequencer {
   }
 
   buildUI() {
-    const ledRow = document.getElementById('step-leds');
-    const btnRow = document.getElementById('step-buttons');
-    if (!ledRow || !btnRow) return;
+    const padRow = document.getElementById('step-pads');
+    if (!padRow) return;
 
-    this.ledElements = [];
-    this.btnElements = [];
-
-    ledRow.innerHTML = '';
-    btnRow.innerHTML = '';
+    this.padElements = [];
+    padRow.innerHTML = '';
 
     for (let i = 0; i < this.numSteps; i++) {
-      // LED
-      const led = document.createElement('div');
-      led.className = 'step-led';
-      led.dataset.step = i;
-      ledRow.appendChild(led);
-      this.ledElements.push(led);
+      const pad = document.createElement('div');
+      pad.className = 'step-pad';
+      pad.dataset.step = i;
 
-      // Button
-      const btn = document.createElement('button');
-      btn.className = 'step-btn';
-      btn.textContent = i + 1;
-      btn.dataset.step = i;
-      btn.addEventListener('click', () => this.toggleStep(i));
-      btnRow.appendChild(btn);
-      this.btnElements.push(btn);
+      // LED indicator (top bar)
+      const led = document.createElement('div');
+      led.className = 'pad-led';
+      pad.appendChild(led);
+
+      // Note name
+      const note = document.createElement('div');
+      note.className = 'pad-note';
+      note.textContent = this.steps[i].on ? this.steps[i].note : '';
+      pad.appendChild(note);
+
+      // Step number
+      const num = document.createElement('div');
+      num.className = 'pad-num';
+      num.textContent = i + 1;
+      pad.appendChild(num);
+
+      // Event: mousedown for click/drag (ui-study Drag.ts pattern)
+      pad.addEventListener('mousedown', (e) => this._padMouseDown(i, e));
+      // Event: double-click to clear
+      pad.addEventListener('dblclick', () => this._padDblClick(i));
+
+      padRow.appendChild(pad);
+      this.padElements.push(pad);
     }
 
-    this.updateStepDisplay();
+    this.updateUI();
   }
 
   bindControls() {
@@ -171,39 +209,6 @@ class StepSequencer {
       });
     });
 
-    document.getElementById('btn-step-prev')?.addEventListener('click', () => {
-      if (!this.isPlaying) {
-        this.editStep = (this.editStep - 1 + this.numSteps) % this.numSteps;
-        this.updateStepDisplay();
-        this.playStepPreview();
-      }
-    });
-
-    document.getElementById('btn-step-next')?.addEventListener('click', () => {
-      if (!this.isPlaying) {
-        this.editStep = (this.editStep + 1) % this.numSteps;
-        this.updateStepDisplay();
-        this.playStepPreview();
-      }
-    });
-
-    document.getElementById('btn-step-skip')?.addEventListener('click', () => {
-      if (!this.isPlaying) {
-        this.steps[this.editStep].on = false;
-        this.editStep = (this.editStep + 1) % this.numSteps;
-        this.updateUI();
-        this.updateStepDisplay();
-      }
-    });
-
-    // DEL: clear current edit step data
-    document.getElementById('btn-step-del')?.addEventListener('click', () => {
-      if (!this.isPlaying) {
-        this.clearStep(this.editStep);
-        this.updateStepDisplay();
-      }
-    });
-
     // Step count toggle: 16 / 32
     document.getElementById('btn-steps-16')?.addEventListener('click', () => {
       this.setStepCount(16);
@@ -211,10 +216,134 @@ class StepSequencer {
     document.getElementById('btn-steps-32')?.addEventListener('click', () => {
       this.setStepCount(32);
     });
+
+    // Random pattern
+    document.getElementById('btn-seq-random')?.addEventListener('click', () => {
+      const scaleSelect = document.getElementById('seq-scale-select');
+      const scaleName = scaleSelect ? scaleSelect.value : 'major';
+      this.generateRandom(scaleName);
+    });
   }
 
   toggleStep(index) {
     this.steps[index].on = !this.steps[index].on;
+    this.updateUI();
+  }
+
+  // ===== DRAG HANDLING (ui-study Drag.ts pattern) =====
+
+  _findNoteIndex(freq) {
+    if (!freq || freq <= 0) return SEQ_DEFAULT_NOTE_IDX;
+    let closest = 0;
+    let minDist = Infinity;
+    for (let i = 0; i < SEQ_NOTES.length; i++) {
+      const d = Math.abs(SEQ_NOTES[i].freq - freq);
+      if (d < minDist) { minDist = d; closest = i; }
+    }
+    return closest;
+  }
+
+  _padMouseDown(i, e) {
+    if (e.button !== 0) return; // left click only
+    e.preventDefault();
+    this._dragIndex = i;
+    this._dragStartY = e.clientY;
+    this._dragStartNoteIdx = this.steps[i].on ? this._findNoteIndex(this.steps[i].freq) : SEQ_DEFAULT_NOTE_IDX;
+    this._dragMoved = false;
+    this.editStep = i;
+
+    window.addEventListener('mousemove', this._boundPadMouseMove);
+    window.addEventListener('mouseup', this._boundPadMouseUp);
+  }
+
+  _padMouseMove(e) {
+    const dy = this._dragStartY - e.clientY; // up = positive = pitch UP
+    const noteOffset = Math.round(dy / 8);
+
+    if (Math.abs(dy) > 3) this._dragMoved = true;
+
+    if (this._dragMoved) {
+      const newIdx = Math.max(0, Math.min(SEQ_NOTES.length - 1, this._dragStartNoteIdx + noteOffset));
+      const note = SEQ_NOTES[newIdx];
+
+      this.steps[this._dragIndex].freq = note.freq;
+      this.steps[this._dragIndex].note = note.name;
+      this.steps[this._dragIndex].on = true;
+      this.steps[this._dragIndex].waveType = audioEngine.params.waveType;
+      this.steps[this._dragIndex].drawingSlot = window.drawingMode ? drawingMode.activeSlot : 0;
+
+      // Add dragging class
+      this.padElements[this._dragIndex]?.classList.add('dragging');
+
+      // Show tooltip
+      this._showTooltip(note.name, e);
+      this.updateUI();
+    }
+  }
+
+  _padMouseUp(e) {
+    if (!this._dragMoved) {
+      // Click: toggle ON/OFF
+      this.toggleStep(this._dragIndex);
+    }
+    // Remove dragging class
+    this.padElements[this._dragIndex]?.classList.remove('dragging');
+    this._hideTooltip();
+    this._dragIndex = -1;
+    window.removeEventListener('mousemove', this._boundPadMouseMove);
+    window.removeEventListener('mouseup', this._boundPadMouseUp);
+  }
+
+  _padDblClick(i) {
+    this.clearStep(i);
+    this.editStep = i;
+    this.updateUI();
+  }
+
+  _showTooltip(text, e) {
+    if (!this._tooltip) {
+      this._tooltip = document.createElement('div');
+      this._tooltip.className = 'step-pad-tooltip';
+      document.body.appendChild(this._tooltip);
+    }
+    this._tooltip.textContent = text;
+    this._tooltip.style.left = e.clientX + 'px';
+    this._tooltip.style.top = e.clientY + 'px';
+    this._tooltip.style.display = 'block';
+  }
+
+  _hideTooltip() {
+    if (this._tooltip) {
+      this._tooltip.style.display = 'none';
+    }
+  }
+
+  // ===== RANDOM PATTERN GENERATION =====
+
+  generateRandom(scaleName = 'major') {
+    const scale = SCALES[scaleName] || SCALES.major;
+    const density = 0.5 + Math.random() * 0.3; // 50-80%
+    const octaves = [3, 4, 5];
+
+    for (let i = 0; i < this.numSteps; i++) {
+      if (Math.random() < density) {
+        const degree = scale[Math.floor(Math.random() * scale.length)];
+        const oct = octaves[Math.floor(Math.random() * octaves.length)];
+        const noteName = SEQ_NOTE_NAMES[degree] + oct;
+        const noteIdx = SEQ_NOTES.findIndex(n => n.name === noteName);
+        if (noteIdx >= 0) {
+          this.steps[i].on = true;
+          this.steps[i].freq = SEQ_NOTES[noteIdx].freq;
+          this.steps[i].note = SEQ_NOTES[noteIdx].name;
+          this.steps[i].waveType = audioEngine.params.waveType;
+          this.steps[i].drawingSlot = window.drawingMode ? drawingMode.activeSlot : 0;
+        }
+      } else {
+        this.steps[i].on = false;
+        this.steps[i].freq = 0;
+        this.steps[i].note = '';
+      }
+    }
     this.updateUI();
   }
 
@@ -289,7 +418,7 @@ class StepSequencer {
     }
 
     // Clear current step highlight
-    this.ledElements.forEach(led => led.classList.remove('current'));
+    this.padElements.forEach(pad => pad.classList.remove('current'));
   }
 
   // --- Lookahead Scheduler ---
@@ -422,28 +551,24 @@ class StepSequencer {
   }
 
   updatePlaybackUI() {
-    this.ledElements.forEach((led, i) => {
-      led.classList.toggle('current', i === this.currentStep);
+    this.padElements.forEach((pad, i) => {
+      pad.classList.toggle('current', i === this.currentStep);
     });
   }
 
   updateUI() {
-    this.btnElements.forEach((btn, i) => {
-      btn.classList.toggle('on', this.steps[i].on);
-      btn.classList.toggle('editing', !this.isPlaying && i === this.editStep);
-    });
-    this.ledElements.forEach((led, i) => {
-      led.classList.toggle('active', this.steps[i].on);
-      led.classList.toggle('editing', !this.isPlaying && i === this.editStep);
+    this.padElements.forEach((pad, i) => {
+      const step = this.steps[i];
+      pad.classList.toggle('on', step.on);
+      pad.classList.toggle('editing', !this.isPlaying && i === this.editStep);
+      // Update note name display
+      const noteEl = pad.querySelector('.pad-note');
+      if (noteEl) noteEl.textContent = step.on ? step.note : '';
     });
   }
 
   updateStepDisplay() {
-    const display = document.getElementById('step-display');
-    if (display) {
-      display.textContent = this.editStep + 1;
-    }
-    // Refresh editing highlight
+    // Refresh editing highlight (no separate step-display element anymore)
     this.updateUI();
   }
 
