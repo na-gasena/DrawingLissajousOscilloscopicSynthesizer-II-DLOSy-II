@@ -269,15 +269,14 @@ class VCOLoop {
     if (!this.isOscRunning) return;
 
     const freq = this.getValueAt('frequency', pos);
-    const cutoff = this.getValueAt('cutoff', pos);
-    const res = this.getValueAt('resonance', pos);
     const vol = this.getValueAt('volume', pos);
 
+    const cutoff = this.getValueAt('cutoff', pos);
+    const res = this.getValueAt('resonance', pos);
+
     if (this.isDrawingOsc) {
-      // Drawing mode: control pitch via playbackRate
       this.osc.playbackRate.value = freq / this.baseFreq;
     } else {
-      // Standard oscillator: control pitch via frequency
       this.osc.frequency.value = freq;
     }
     this.filter.frequency.value = cutoff;
@@ -508,14 +507,22 @@ class VCOLoop {
         btn.classList.toggle('vco-on', this.enabled);
       }
       if (this.enabled) {
-        // If sequencer is already playing, start oscillator immediately
-        if (window.stepSequencer && stepSequencer.isPlaying && audioEngine.isInitialized) {
-          this.startOsc();
-          this.applyAtPosition(this.playheadPosition);
+      // If sequencer is already playing, start oscillator immediately
+      if (window.stepSequencer && stepSequencer.isPlaying && audioEngine.isInitialized) {
+        this.startOsc();
+        // Sync playhead to current sequencer position
+        const pos = stepSequencer.currentStep / stepSequencer.numSteps;
+        this.playheadPosition = pos;
+        this.applyAtPosition(pos);
+        // Start continuous loop if in CONT mode
+        if (this.continuousMode) {
+          this.startContinuousLoop();
         }
-      } else {
-        this.stopOsc();
       }
+    } else {
+      this.stopOsc();
+      this.stopContinuousLoop();
+    }
     });
 
     // STEP / CONT mode toggle

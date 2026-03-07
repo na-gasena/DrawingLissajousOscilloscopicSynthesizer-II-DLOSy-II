@@ -69,6 +69,24 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
+  // Tab key to switch between SEQUENCER / DRUMS tabs
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Tab' && !e.target.closest('input, textarea, select')) {
+      e.preventDefault();
+      const tabs = document.querySelectorAll('.center-tab');
+      const contents = document.querySelectorAll('.center-tab-content');
+      let activeIdx = 0;
+      tabs.forEach((t, i) => { if (t.classList.contains('active')) activeIdx = i; });
+      const nextIdx = (activeIdx + 1) % tabs.length;
+      tabs.forEach(t => t.classList.remove('active'));
+      contents.forEach(c => c.classList.remove('active'));
+      tabs[nextIdx].classList.add('active');
+      const target = tabs[nextIdx].dataset.tab;
+      const content = document.getElementById(`center-tab-${target}`);
+      if (content) content.classList.add('active');
+    }
+  });
+
   // First click / touch to init audio context
   const initAudio = async () => {
     await audioEngine.init();

@@ -130,40 +130,55 @@ class DrumMachine {
 
   buildUI() {
     const tracksContainer = document.getElementById('drum-tracks');
-    const mutesContainer = document.getElementById('drum-mutes');
-    const knobsContainer = document.getElementById('drum-knobs');
     if (!tracksContainer) return;
 
     tracksContainer.innerHTML = '';
-    if (mutesContainer) mutesContainer.innerHTML = '';
-    if (knobsContainer) knobsContainer.innerHTML = '';
 
-    // Master toggle (in mutes container)
-    if (mutesContainer) {
-      const masterBtn = document.createElement('button');
-      masterBtn.className = 'drum-mute-btn drum-master-btn' + (this.enabled ? '' : ' muted');
-      masterBtn.textContent = 'ALL';
-      masterBtn.addEventListener('click', () => {
-        this.enabled = !this.enabled;
-        masterBtn.classList.toggle('muted', !this.enabled);
-      });
-      mutesContainer.appendChild(masterBtn);
-    }
+    // Master toggle row
+    const masterRow = document.createElement('div');
+    masterRow.className = 'drum-track drum-master-row';
+    const masterBtn = document.createElement('button');
+    masterBtn.className = 'drum-mute-btn drum-master-btn' + (this.enabled ? '' : ' muted');
+    masterBtn.textContent = 'ALL';
+    masterBtn.addEventListener('click', () => {
+      this.enabled = !this.enabled;
+      masterBtn.classList.toggle('muted', !this.enabled);
+    });
+    masterRow.appendChild(masterBtn);
+    tracksContainer.appendChild(masterRow);
 
-    // Build each track from definitions
+    // Build each track row with inline controls
     this.trackDefs.forEach(def => {
       const track = this.tracks[def.key];
       if (!track) return;
 
-      // Track row
       const row = document.createElement('div');
       row.className = 'drum-track';
 
-      const label = document.createElement('span');
-      label.className = 'drum-track-label';
-      label.textContent = track.name;
-      row.appendChild(label);
+      // Mute button (inline left)
+      const muteBtn = document.createElement('button');
+      muteBtn.className = 'drum-mute-btn' + (track.muted ? ' muted' : '');
+      muteBtn.textContent = track.name;
+      muteBtn.addEventListener('click', () => {
+        track.muted = !track.muted;
+        muteBtn.classList.toggle('muted');
+      });
+      row.appendChild(muteBtn);
 
+      // Volume slider (inline left)
+      const volSlider = document.createElement('input');
+      volSlider.type = 'range';
+      volSlider.className = 'drum-vol-slider';
+      volSlider.min = '0';
+      volSlider.max = '1';
+      volSlider.step = '0.01';
+      volSlider.value = String(track.volume);
+      volSlider.addEventListener('input', (e) => {
+        track.volume = parseFloat(e.target.value);
+      });
+      row.appendChild(volSlider);
+
+      // Step buttons
       for (let i = 0; i < this.numSteps; i++) {
         const step = document.createElement('div');
         step.className = 'drum-step' + (track.pattern[i] ? ' on' : '');
@@ -177,39 +192,6 @@ class DrumMachine {
       }
 
       tracksContainer.appendChild(row);
-
-      // Mute button
-      if (mutesContainer) {
-        const muteBtn = document.createElement('button');
-        muteBtn.className = 'drum-mute-btn' + (track.muted ? ' muted' : '');
-        muteBtn.textContent = track.name;
-        muteBtn.addEventListener('click', () => {
-          track.muted = !track.muted;
-          muteBtn.classList.toggle('muted');
-        });
-        mutesContainer.appendChild(muteBtn);
-      }
-
-      // Volume knob
-      if (knobsContainer) {
-        const knobGroup = document.createElement('div');
-        knobGroup.className = 'knob-group';
-
-        const knob = document.createElement('div');
-        knob.className = 'knob';
-        knob.dataset.param = `drum_${def.key}_vol`;
-        knob.dataset.min = '0';
-        knob.dataset.max = '1';
-        knob.dataset.value = String(track.volume);
-        knobGroup.appendChild(knob);
-
-        const knobLabel = document.createElement('span');
-        knobLabel.className = 'label';
-        knobLabel.textContent = track.name;
-        knobGroup.appendChild(knobLabel);
-
-        knobsContainer.appendChild(knobGroup);
-      }
     });
   }
 
@@ -221,14 +203,14 @@ class DrumMachine {
       if (!track || track.muted) return;
       if (!track.pattern[stepIndex]) return;
 
-      // Play audio locally
-      if (audioEngine[def.playMethod]) {
-        audioEngine[def.playMethod](track.volume);
-      }
-
-      // Also send MIDI OUT if enabled (with precise timestamp)
+      // MIDI OUT: send MIDI only, skip local audio
       if (window.midiOut && midiOut.enabled) {
         midiOut.sendDrumNote(def.key, midiTimestamp);
+      } else {
+        // Play audio locally
+        if (audioEngine[def.playMethod]) {
+          audioEngine[def.playMethod](track.volume);
+        }
       }
     });
   }

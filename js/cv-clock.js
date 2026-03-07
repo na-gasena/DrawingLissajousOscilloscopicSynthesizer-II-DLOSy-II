@@ -238,6 +238,9 @@ class MidiClockSync {
           uiComponents.renderKnob(tempoKnob);
         }
       }
+      // Update header BPM display
+      const tempoVal = document.getElementById('tempo-value');
+      if (tempoVal) tempoVal.textContent = this.detectedBPM;
     }
   }
 

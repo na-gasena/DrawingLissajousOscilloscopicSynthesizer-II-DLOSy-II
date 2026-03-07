@@ -734,31 +734,8 @@ body {
 /* ===== DRUM MACHINE ===== */
 .drum-layout {
   display: flex;
-  gap: 12px;
-}
-
-.drum-grid-area {
-  flex: 1;
-  overflow-x: auto;
-}
-
-.drum-controls-area {
-  width: 130px;
-  flex-shrink: 0;
-  display: flex;
   flex-direction: column;
-  gap: 8px;
-}
-
-.drum-controls-area .knobs-row {
-  flex-wrap: wrap;
-  gap: 6px;
-  justify-content: center;
-}
-
-.drum-controls-area .knob-group {
-  transform: scale(0.8);
-  transform-origin: center;
+  gap: 2px;
 }
 
 #center-tab-drums .panel-title {
@@ -771,23 +748,32 @@ body {
 .drum-track {
   display: flex;
   align-items: center;
-  gap: 3px;
-  margin-bottom: 3px;
+  gap: 2px;
+  margin-bottom: 2px;
 }
 
-.drum-track-label {
+.drum-master-row {
+  margin-bottom: 4px;
+}
+
+.drum-mute-btn {
   width: 32px;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--text-secondary);
-  text-align: right;
   flex-shrink: 0;
+}
+
+.drum-vol-slider {
+  width: 36px;
+  flex-shrink: 0;
+  height: 4px;
+  accent-color: var(--accent-secondary);
+  cursor: pointer;
 }
 
 .drum-step {
   flex: 1;
-  height: 36px;
-  min-width: 20px;
+  aspect-ratio: 1;
+  min-width: 14px;
+  max-width: 32px;
   background: var(--bg-panel-inset);
   border: 1px solid var(--border-panel);
   border-radius: 3px;
