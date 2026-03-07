@@ -64,36 +64,59 @@ document.addEventListener('DOMContentLoaded', () => {
     arpeggiator.init();
   }
 
-  // Center panel tab switching (Sequencer / Drums)
-  document.querySelectorAll('.center-tab').forEach(tab => {
-    tab.addEventListener('click', () => {
-      // Update tab buttons
-      document.querySelectorAll('.center-tab').forEach(t => t.classList.remove('active'));
-      tab.classList.add('active');
+  // ===== Left panel tab switching (SYNTH / SETTINGS) =====
+  function switchLeftTab(tabName) {
+    document.querySelectorAll('.left-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.left-tab-content').forEach(c => c.classList.remove('active'));
+    const tab = document.querySelector(`.left-tab[data-left-tab="${tabName}"]`);
+    const content = document.getElementById(`left-tab-${tabName}`);
+    if (tab) tab.classList.add('active');
+    if (content) content.classList.add('active');
+  }
 
-      // Switch content
-      const target = tab.dataset.tab;
-      document.querySelectorAll('.center-tab-content').forEach(c => c.classList.remove('active'));
-      const content = document.getElementById(`center-tab-${target}`);
-      if (content) content.classList.add('active');
-    });
+  document.querySelectorAll('.left-tab').forEach(tab => {
+    tab.addEventListener('click', () => switchLeftTab(tab.dataset.leftTab));
   });
 
-  // Tab key to switch between SEQUENCER / DRUMS tabs
+  // ===== Center panel tab switching + left panel sync =====
+  function onCenterTabSwitch(target) {
+    // Update center tab buttons
+    document.querySelectorAll('.center-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.center-tab-content').forEach(c => c.classList.remove('active'));
+    const tabBtn = document.querySelector(`.center-tab[data-tab="${target}"]`);
+    const content = document.getElementById(`center-tab-${target}`);
+    if (tabBtn) tabBtn.classList.add('active');
+    if (content) content.classList.add('active');
+
+    // Left panel: show SYNTH tab only when SEQUENCER is active
+    const synthTab = document.querySelector('.left-tab[data-left-tab="synth"]');
+    if (target === 'sequencer') {
+      if (synthTab) synthTab.style.display = '';
+      switchLeftTab('synth');
+    } else {
+      if (synthTab) synthTab.style.display = 'none';
+      switchLeftTab('settings');
+    }
+
+    // ARP enabled: auto-activate when ARP tab is active
+    if (window.arpeggiator) {
+      arpeggiator.enabled = (target === 'arp');
+    }
+  }
+
+  document.querySelectorAll('.center-tab').forEach(tab => {
+    tab.addEventListener('click', () => onCenterTabSwitch(tab.dataset.tab));
+  });
+
+  // Tab key to switch between SEQUENCER / DRUMS / ARP tabs
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Tab' && !e.target.closest('input, textarea, select')) {
       e.preventDefault();
       const tabs = document.querySelectorAll('.center-tab');
-      const contents = document.querySelectorAll('.center-tab-content');
       let activeIdx = 0;
       tabs.forEach((t, i) => { if (t.classList.contains('active')) activeIdx = i; });
       const nextIdx = (activeIdx + 1) % tabs.length;
-      tabs.forEach(t => t.classList.remove('active'));
-      contents.forEach(c => c.classList.remove('active'));
-      tabs[nextIdx].classList.add('active');
-      const target = tabs[nextIdx].dataset.tab;
-      const content = document.getElementById(`center-tab-${target}`);
-      if (content) content.classList.add('active');
+      onCenterTabSwitch(tabs[nextIdx].dataset.tab);
     }
   });
 

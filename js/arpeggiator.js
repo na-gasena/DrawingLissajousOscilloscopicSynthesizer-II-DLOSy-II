@@ -14,11 +14,22 @@ class Arpeggiator {
     this.octave = 0;
     this.volume = 0.3;
 
-    // ADSR envelope
-    this.adsrAttack = 0.01;
-    this.adsrDecay = 0.1;
-    this.adsrSustain = 0.6;
-    this.adsrRelease = 0.1;
+    // Persistent oscillator nodes (like the reference prototype)
+    this.oscL = null;
+    this.oscR = null;
+    this.gainL = null;
+    this.gainR = null;
+    this.panL = null;
+    this.panR = null;
+    this.isOscRunning = false;
+
+    // ADSR envelope curve (breakpoint editor)
+    this.adsrCurve = [
+      {x:0, y:0}, {x:0.05, y:1}, {x:0.2, y:0.6}, {x:0.8, y:0.6}, {x:1, y:0}
+    ];
+    this.adsrCanvas = null;
+    this.adsrCtx2d = null;
+    this.adsrDragging = null;
 
     // Wave type & Glitch
     this.waveType = 'sine'; // sine, triangle, square, sawtooth, drawing
@@ -79,52 +90,36 @@ class Arpeggiator {
 
   // ===== OSCILLATOR MANAGEMENT =====
 
-  // Fire a single note with ADSR envelope (called per arp step)
-  fireNote(midi) {
+  // Start persistent L/R oscillators (called when first key is pressed)
+  startOsc() {
+    if (this.isOscRunning) return;
     if (!window.audioEngine || !audioEngine.isInitialized) return;
     const ctx = audioEngine.ctx;
-    const now = ctx.currentTime;
 
-    const adjusted = midi + this.octave * 12;
-    const freq = 440 * Math.pow(2, (adjusted - 69) / 12);
+    // Gain + Pan for L
+    this.gainL = ctx.createGain();
+    this.gainL.gain.value = this.volume;
+    this.panL = ctx.createStereoPanner();
+    this.panL.pan.value = -1;
+    this.gainL.connect(this.panL);
+    this.panL.connect(audioEngine.masterGain);
 
-    // ADSR params (shared with synth or own defaults)
-    const a = this.adsrAttack;
-    const d = this.adsrDecay;
-    const s = this.adsrSustain;
-    const r = this.adsrRelease;
+    // Gain + Pan for R
+    this.gainR = ctx.createGain();
+    this.gainR.gain.value = this.volume;
+    this.panR = ctx.createStereoPanner();
+    this.panR.pan.value = 1;
+    this.gainR.connect(this.panR);
+    this.panR.connect(audioEngine.masterGain);
 
-    // Calculate note duration from BPM and div
-    const bpm = audioEngine.params.tempo || 120;
-    const stepDur = 60 / bpm / (this.div / 4);
-    const totalDur = Math.max(stepDur, a + d + r + 0.01);
+    this._createOscNodes();
+    this.isOscRunning = true;
+  }
 
-    // --- L channel ---
-    const envL = ctx.createGain();
-    envL.gain.setValueAtTime(0.001, now);
-    envL.gain.linearRampToValueAtTime(this.volume, now + a);
-    envL.gain.linearRampToValueAtTime(this.volume * s, now + a + d);
-    envL.gain.setValueAtTime(this.volume * s, now + totalDur - r);
-    envL.gain.linearRampToValueAtTime(0.001, now + totalDur);
-    const panL = ctx.createStereoPanner();
-    panL.pan.value = -1;
-    envL.connect(panL);
-    panL.connect(audioEngine.masterGain);
-
-    // --- R channel ---
-    const envR = ctx.createGain();
-    envR.gain.setValueAtTime(0.001, now);
-    envR.gain.linearRampToValueAtTime(this.volume, now + a);
-    envR.gain.linearRampToValueAtTime(this.volume * s, now + a + d);
-    envR.gain.setValueAtTime(this.volume * s, now + totalDur - r);
-    envR.gain.linearRampToValueAtTime(0.001, now + totalDur);
-    const panR = ctx.createStereoPanner();
-    panR.pan.value = 1;
-    envR.connect(panR);
-    panR.connect(audioEngine.masterGain);
+  _createOscNodes() {
+    const ctx = audioEngine.ctx;
 
     if (this.waveType === 'drawing' && window.drawingMode) {
-      // DrawMode: stereo AudioBufferSource
       const slot = drawingMode.slots[drawingMode.activeSlot];
       if (slot && slot.waveX.length > 0) {
         const len = slot.waveX.length;
@@ -135,61 +130,72 @@ class Arpeggiator {
           lData[i] = slot.waveX[i] || 0;
           rData[i] = (slot.waveY[i] !== undefined) ? slot.waveY[i] : (slot.waveX[i] || 0);
         }
-
-        // L source
-        const srcL = ctx.createBufferSource();
-        srcL.buffer = buffer;
-        srcL.loop = true;
+        this.oscL = ctx.createBufferSource();
+        this.oscR = ctx.createBufferSource();
+        this.oscL.buffer = buffer;
+        this.oscR.buffer = buffer;
+        this.oscL.loop = true;
+        this.oscR.loop = true;
         const baseF = ctx.sampleRate / len;
-        srcL.playbackRate.value = freq / baseF;
-        srcL.connect(envL);
-        srcL.start(now);
-        srcL.stop(now + totalDur);
-        srcL.onended = () => { srcL.disconnect(); envL.disconnect(); panL.disconnect(); };
-
-        // R source (same buffer, different freq for ratio)
-        const srcR = ctx.createBufferSource();
-        srcR.buffer = buffer;
-        srcR.loop = true;
-        srcR.playbackRate.value = (freq * this.ratio) / baseF;
-        srcR.connect(envR);
-        srcR.start(now);
-        srcR.stop(now + totalDur);
-        srcR.onended = () => { srcR.disconnect(); envR.disconnect(); panR.disconnect(); };
+        this.oscL.playbackRate.value = this.baseFreq / baseF;
+        this.oscR.playbackRate.value = (this.baseFreq * this.ratio) / baseF;
+        this._drawBaseF = baseF;
       }
     } else {
-      // Standard oscillator with PeriodicWave or basic type
-      const oscL = ctx.createOscillator();
-      const oscR = ctx.createOscillator();
-
+      this.oscL = ctx.createOscillator();
+      this.oscR = ctx.createOscillator();
       if (this.glitchSteps < 64) {
-        // Apply crushed PeriodicWave
         const pw = this._createPeriodicWave();
-        oscL.setPeriodicWave(pw);
-        oscR.setPeriodicWave(pw);
+        this.oscL.setPeriodicWave(pw);
+        this.oscR.setPeriodicWave(pw);
       } else {
-        oscL.type = this.waveType;
-        oscR.type = this.waveType;
+        this.oscL.type = this.waveType;
+        this.oscR.type = this.waveType;
       }
-
-      oscL.frequency.value = freq;
-      oscR.frequency.value = freq * this.ratio;
-
-      oscL.connect(envL);
-      oscR.connect(envR);
-
-      oscL.start(now);
-      oscR.start(now);
-      oscL.stop(now + totalDur);
-      oscR.stop(now + totalDur);
-
-      oscL.onended = () => { oscL.disconnect(); envL.disconnect(); panL.disconnect(); };
-      oscR.onended = () => { oscR.disconnect(); envR.disconnect(); panR.disconnect(); };
+      this.oscL.frequency.value = this.baseFreq;
+      this.oscR.frequency.value = this.baseFreq * this.ratio;
     }
 
-    // Update freq display
-    const el = document.getElementById('arp-freq-val');
-    if (el) el.textContent = Math.round(freq) + 'Hz';
+    this.oscL.connect(this.gainL);
+    this.oscR.connect(this.gainR);
+    this.oscL.start();
+    this.oscR.start();
+  }
+
+  stopOsc() {
+    if (!this.isOscRunning) return;
+    try { this.oscL?.stop(); } catch(e) {}
+    try { this.oscR?.stop(); } catch(e) {}
+    try { this.oscL?.disconnect(); } catch(e) {}
+    try { this.oscR?.disconnect(); } catch(e) {}
+    try { this.gainL?.disconnect(); } catch(e) {}
+    try { this.gainR?.disconnect(); } catch(e) {}
+    try { this.panL?.disconnect(); } catch(e) {}
+    try { this.panR?.disconnect(); } catch(e) {}
+    this.oscL = null; this.oscR = null;
+    this.gainL = null; this.gainR = null;
+    this.isOscRunning = false;
+  }
+
+  // Set base frequency and update running oscillators
+  setBaseFreq(f) {
+    this.baseFreq = f;
+    if (!this.isOscRunning) return;
+    if (this.waveType === 'drawing') {
+      const baseF = this._drawBaseF || 261.63;
+      if (this.oscL?.playbackRate) this.oscL.playbackRate.value = f / baseF;
+      if (this.oscR?.playbackRate) this.oscR.playbackRate.value = (f * this.ratio) / baseF;
+    } else {
+      if (this.oscL?.frequency) this.oscL.frequency.value = f;
+      if (this.oscR?.frequency) this.oscR.frequency.value = f * this.ratio;
+    }
+  }
+
+  // Called by arpeggiator on each step: change oscillator frequency to the note
+  noteOn(midi) {
+    const adjusted = midi + this.octave * 12;
+    const f = 440 * Math.pow(2, (adjusted - 69) / 12);
+    this.setBaseFreq(f);
   }
 
   _createPeriodicWave() {
@@ -209,6 +215,38 @@ class Arpeggiator {
       imag[k] = si / N;
     }
     return ctx.createPeriodicWave(real, imag, { disableNormalization: true });
+  }
+
+  // Apply ADSR curve to a gain AudioParam
+  _applyAdsrCurve(gainParam, startTime, duration, maxVol) {
+    const pts = this.adsrCurve;
+    const numSamples = 16;
+    for (let i = 0; i <= numSamples; i++) {
+      const t = i / numSamples;
+      const envVal = this._interpolateCurve(t);
+      const val = Math.max(0.001, envVal * maxVol);
+      const time = startTime + t * duration;
+      if (i === 0) {
+        gainParam.setValueAtTime(val, time);
+      } else {
+        gainParam.linearRampToValueAtTime(val, time);
+      }
+    }
+  }
+
+  _interpolateCurve(t) {
+    const pts = this.adsrCurve;
+    if (pts.length === 0) return 0;
+    if (t <= pts[0].x) return pts[0].y;
+    if (t >= pts[pts.length - 1].x) return pts[pts.length - 1].y;
+    for (let i = 1; i < pts.length; i++) {
+      if (t <= pts[i].x) {
+        const range = pts[i].x - pts[i-1].x;
+        const lt = range > 0 ? (t - pts[i-1].x) / range : 0;
+        return pts[i-1].y + (pts[i].y - pts[i-1].y) * lt;
+      }
+    }
+    return pts[pts.length - 1].y;
   }
 
   // ===== ARPEGGIATOR =====
@@ -269,7 +307,7 @@ class Arpeggiator {
     const now = audioEngine.ctx.currentTime;
     while (this._nextStepTime < now + 0.05) {
       const note = this.getNextNote();
-      if (note !== null) this.fireNote(note);
+      if (note !== null) this.noteOn(note);
       this._nextStepTime += stepDur;
       this.updateKeyHighlights();
     }
@@ -308,6 +346,7 @@ class Arpeggiator {
       this.notesHeld.push(midi);
       this.arpIndex = 0;
       if (this.notesHeld.length === 1) {
+        this.startOsc();
         this.startArp();
       }
       this.updateKeyHighlights();
@@ -319,6 +358,7 @@ class Arpeggiator {
     this.arpIndex = 0;
     if (this.notesHeld.length === 0) {
       this.stopArp();
+      this.stopOsc();
     }
     this.updateKeyHighlights();
   }
@@ -333,7 +373,6 @@ class Arpeggiator {
       <div class="panel-title">ARPEGGIATOR</div>
       <div class="arp-controls">
         <div class="arp-row">
-          <button id="arp-toggle" class="small-btn">OFF</button>
           <span class="arp-group-label">MODE</span>
           <button class="small-btn arp-pattern-btn active" data-pattern="up">UP</button>
           <button class="small-btn arp-pattern-btn" data-pattern="down">DN</button>
@@ -356,16 +395,10 @@ class Arpeggiator {
           <button class="small-btn arp-wave-btn" data-wave="drawing">DRAW</button>
         </div>
 
-        <div class="arp-row">
-          <span class="arp-group-label">ADSR</span>
-          <span class="cv-label">A</span>
-          <input type="range" id="arp-adsr-a" min="1" max="500" value="10" class="fx-slider arp-adsr-slider">
-          <span class="cv-label">D</span>
-          <input type="range" id="arp-adsr-d" min="1" max="500" value="100" class="fx-slider arp-adsr-slider">
-          <span class="cv-label">S</span>
-          <input type="range" id="arp-adsr-s" min="0" max="100" value="60" class="fx-slider arp-adsr-slider">
-          <span class="cv-label">R</span>
-          <input type="range" id="arp-adsr-r" min="1" max="1000" value="100" class="fx-slider arp-adsr-slider">
+        <div class="arp-adsr-editor">
+          <span class="cv-label">ENVELOPE</span>
+          <canvas id="arp-adsr-canvas" width="300" height="80"></canvas>
+          <button id="arp-adsr-reset" class="small-btn">RESET</button>
         </div>
 
         <div class="arp-keys" id="arp-keys">
@@ -443,23 +476,6 @@ class Arpeggiator {
   }
 
   bindUIEvents() {
-    // Toggle
-    document.getElementById('arp-toggle')?.addEventListener('click', () => {
-      this.enabled = !this.enabled;
-      const btn = document.getElementById('arp-toggle');
-      if (btn) {
-        btn.textContent = this.enabled ? 'ON' : 'OFF';
-        btn.classList.toggle('midi-active', this.enabled);
-      }
-      if (!this.enabled) {
-        this.notesHeld = [];
-        this.keyStates = {};
-        this.stopArp();
-        this.stopOsc();
-        this.updateKeyHighlights();
-      }
-    });
-
     // Pattern buttons
     document.querySelectorAll('.arp-pattern-btn').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -491,9 +507,10 @@ class Arpeggiator {
     // Freq slider (logarithmic: 20Hz - 8000Hz)
     document.getElementById('arp-freq-slider')?.addEventListener('input', (e) => {
       const val = parseFloat(e.target.value) / 1000;
-      this.baseFreq = 20 * Math.pow(400, val);
+      const f = 20 * Math.pow(400, val);
+      this.setBaseFreq(f);
       const el = document.getElementById('arp-freq-val');
-      if (el) el.textContent = Math.round(this.baseFreq) + 'Hz';
+      if (el) el.textContent = Math.round(f) + 'Hz';
     });
 
     // Ratio slider
@@ -519,18 +536,24 @@ class Arpeggiator {
       document.getElementById('arp-vol-val').textContent = parseInt(e.target.value) + '%';
     });
 
-    // ADSR sliders
-    document.getElementById('arp-adsr-a')?.addEventListener('input', (e) => {
-      this.adsrAttack = parseInt(e.target.value) / 1000;
-    });
-    document.getElementById('arp-adsr-d')?.addEventListener('input', (e) => {
-      this.adsrDecay = parseInt(e.target.value) / 1000;
-    });
-    document.getElementById('arp-adsr-s')?.addEventListener('input', (e) => {
-      this.adsrSustain = parseInt(e.target.value) / 100;
-    });
-    document.getElementById('arp-adsr-r')?.addEventListener('input', (e) => {
-      this.adsrRelease = parseInt(e.target.value) / 1000;
+    // ADSR envelope editor (canvas)
+    this.adsrCanvas = document.getElementById('arp-adsr-canvas');
+    if (this.adsrCanvas) {
+      this.adsrCtx2d = this.adsrCanvas.getContext('2d');
+      this.adsrCanvas.addEventListener('mousedown', (e) => this._adsrMouseDown(e));
+      this.adsrCanvas.addEventListener('mousemove', (e) => this._adsrMouseMove(e));
+      this.adsrCanvas.addEventListener('mouseup', () => this.adsrDragging = null);
+      this.adsrCanvas.addEventListener('mouseleave', () => this.adsrDragging = null);
+      this.adsrCanvas.addEventListener('dblclick', (e) => this._adsrDblClick(e));
+      this.drawAdsrCurve();
+    }
+
+    // ADSR reset
+    document.getElementById('arp-adsr-reset')?.addEventListener('click', () => {
+      this.adsrCurve = [
+        {x:0, y:0}, {x:0.05, y:1}, {x:0.2, y:0.6}, {x:0.8, y:0.6}, {x:1, y:0}
+      ];
+      this.drawAdsrCurve();
     });
 
     // Octave buttons
@@ -542,6 +565,143 @@ class Arpeggiator {
       this.octave = Math.min(3, this.octave + 1);
       document.getElementById('arp-oct-val').textContent = this.octave;
     });
+  }
+
+  // ===== ADSR Envelope Canvas =====
+
+  drawAdsrCurve() {
+    if (!this.adsrCanvas || !this.adsrCtx2d) return;
+    const ctx = this.adsrCtx2d;
+    const w = this.adsrCanvas.width;
+    const h = this.adsrCanvas.height;
+
+    ctx.clearRect(0, 0, w, h);
+
+    // Background
+    ctx.fillStyle = '#0a0a0a';
+    ctx.fillRect(0, 0, w, h);
+
+    // Grid lines
+    ctx.strokeStyle = '#1a1a1a';
+    ctx.lineWidth = 0.5;
+    for (let i = 0; i <= 4; i++) {
+      const y = (i / 4) * h;
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+    }
+
+    // Curve
+    const pts = this.adsrCurve;
+    if (pts.length < 2) return;
+
+    ctx.strokeStyle = '#00ff88';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    pts.forEach((p, i) => {
+      const px = p.x * w;
+      const py = (1 - p.y) * h;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    });
+    ctx.stroke();
+
+    // Fill under curve
+    ctx.globalAlpha = 0.1;
+    ctx.fillStyle = '#00ff88';
+    ctx.lineTo(pts[pts.length - 1].x * w, h);
+    ctx.lineTo(pts[0].x * w, h);
+    ctx.closePath();
+    ctx.fill();
+    ctx.globalAlpha = 1.0;
+
+    // Points
+    pts.forEach(p => {
+      const px = p.x * w;
+      const py = (1 - p.y) * h;
+      ctx.fillStyle = '#00ff88';
+      ctx.beginPath();
+      ctx.arc(px, py, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    });
+  }
+
+  _adsrMousePos(e) {
+    const rect = this.adsrCanvas.getBoundingClientRect();
+    return {
+      x: Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)),
+      y: Math.max(0, Math.min(1, 1 - (e.clientY - rect.top) / rect.height))
+    };
+  }
+
+  _adsrMouseDown(e) {
+    const pos = this._adsrMousePos(e);
+    const w = this.adsrCanvas.width;
+    const h = this.adsrCanvas.height;
+
+    // Find nearest point
+    let nearIdx = -1;
+    let nearDist = Infinity;
+    this.adsrCurve.forEach((p, i) => {
+      const dx = (p.x - pos.x) * w;
+      const dy = (p.y - pos.y) * h;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < 12 && dist < nearDist) {
+        nearDist = dist;
+        nearIdx = i;
+      }
+    });
+
+    if (nearIdx >= 0) {
+      this.adsrDragging = nearIdx;
+    } else {
+      // Add new point
+      let insertIdx = 0;
+      for (let i = 0; i < this.adsrCurve.length; i++) {
+        if (this.adsrCurve[i].x < pos.x) insertIdx = i + 1;
+      }
+      this.adsrCurve.splice(insertIdx, 0, {x: pos.x, y: pos.y});
+      this.adsrDragging = insertIdx;
+      this.drawAdsrCurve();
+    }
+  }
+
+  _adsrMouseMove(e) {
+    if (this.adsrDragging === null) return;
+    const pos = this._adsrMousePos(e);
+    const pts = this.adsrCurve;
+    const idx = this.adsrDragging;
+
+    // First and last points: lock X
+    if (idx === 0) {
+      pts[idx].x = 0;
+    } else if (idx === pts.length - 1) {
+      pts[idx].x = 1;
+    } else {
+      // Clamp between neighbors
+      pts[idx].x = Math.max(pts[idx - 1].x + 0.01, Math.min(pts[idx + 1].x - 0.01, pos.x));
+    }
+    pts[idx].y = pos.y;
+    this.drawAdsrCurve();
+  }
+
+  _adsrDblClick(e) {
+    const pos = this._adsrMousePos(e);
+    const w = this.adsrCanvas.width;
+    const h = this.adsrCanvas.height;
+
+    // Find and remove point (not first/last)
+    for (let i = 1; i < this.adsrCurve.length - 1; i++) {
+      const p = this.adsrCurve[i];
+      const dx = (p.x - pos.x) * w;
+      const dy = (p.y - pos.y) * h;
+      if (Math.sqrt(dx * dx + dy * dy) < 12) {
+        this.adsrCurve.splice(i, 1);
+        this.drawAdsrCurve();
+        return;
+      }
+    }
   }
 }
 

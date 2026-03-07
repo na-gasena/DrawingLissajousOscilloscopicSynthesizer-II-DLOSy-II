@@ -46,148 +46,163 @@
       <main id="synth-main">
         <!-- --- LEFT: Synth Controls --- -->
         <section id="panel-synth" class="panel">
-          <div class="panel-title">SYNTH</div>
+          <!-- Left Panel Tab Bar -->
+          <div class="left-tabs">
+            <button class="left-tab active" data-left-tab="synth">SYNTH</button>
+            <button class="left-tab" data-left-tab="settings">SETTINGS</button>
+          </div>
 
-          <!-- Waveform Select -->
-          <div class="control-row">
-            <div class="wave-select-group">
-              <span class="label">WAVE</span>
-              <div class="wave-buttons">
-                <button class="wave-btn active" data-wave="sine">SIN</button>
-                <button class="wave-btn" data-wave="triangle">TRI</button>
-                <button class="wave-btn" data-wave="square">SQR</button>
-                <button class="wave-btn" data-wave="sawtooth">SAW</button>
-                <button class="wave-btn drawing-btn" data-wave="drawing">
-                  DRAW
-                </button>
+          <!-- SYNTH Tab Content (SEQUENCER only) -->
+          <div id="left-tab-synth" class="left-tab-content active">
+            <!-- Waveform Select -->
+            <div class="control-row">
+              <div class="wave-select-group">
+                <span class="label">WAVE</span>
+                <div class="wave-buttons">
+                  <button class="wave-btn active" data-wave="sine">SIN</button>
+                  <button class="wave-btn" data-wave="triangle">TRI</button>
+                  <button class="wave-btn" data-wave="square">SQR</button>
+                  <button class="wave-btn" data-wave="sawtooth">SAW</button>
+                  <button class="wave-btn drawing-btn" data-wave="drawing">
+                    DRAW
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Knobs Row: Cutoff, Resonance, Volume -->
+            <div class="control-row knobs-row">
+              <div class="knob-group">
+                <div
+                  id="knob-cutoff"
+                  class="knob"
+                  data-param="cutoff"
+                  data-min="100"
+                  data-max="5000"
+                  data-value="2000"
+                ></div>
+                <span class="label">CUTOFF</span>
+              </div>
+              <div class="knob-group">
+                <div
+                  id="knob-resonance"
+                  class="knob"
+                  data-param="resonance"
+                  data-min="0"
+                  data-max="30"
+                  data-value="5"
+                ></div>
+                <span class="label">RES</span>
+              </div>
+              <div class="knob-group">
+                <div
+                  id="knob-synth-vol"
+                  class="knob"
+                  data-param="synthVol"
+                  data-min="0"
+                  data-max="1"
+                  data-value="0.5"
+                ></div>
+                <span class="label">VOL</span>
+              </div>
+            </div>
+
+            <!-- ADSR Envelope Curve Editor -->
+            <div class="control-row">
+              <div class="adsr-editor-wrapper">
+                <span class="label">ADSR ENVELOPE</span>
+                <div class="adsr-canvas-container">
+                  <canvas id="adsr-canvas" width="240" height="100"></canvas>
+                </div>
+                <div class="adsr-values" id="adsr-values"></div>
+              </div>
+            </div>
+
+            <!-- Octave -->
+            <div class="control-row">
+              <div class="octave-group">
+                <span class="label">OCTAVE</span>
+                <button id="btn-oct-down" class="small-btn">−</button>
+                <div class="led-row" id="oct-leds">
+                  <div class="led"></div>
+                  <div class="led active"></div>
+                  <div class="led"></div>
+                  <div class="led"></div>
+                  <div class="led"></div>
+                </div>
+                <button id="btn-oct-up" class="small-btn">+</button>
+              </div>
+            </div>
+
+            <!-- Delay -->
+            <div class="control-row knobs-row">
+              <div class="knob-group">
+                <div
+                  id="knob-delay-time"
+                  class="knob"
+                  data-param="delayTime"
+                  data-min="0.01"
+                  data-max="0.5"
+                  data-value="0.2"
+                ></div>
+                <span class="label">DLY TIME</span>
+              </div>
+              <div class="knob-group">
+                <div
+                  id="knob-delay-fb"
+                  class="knob"
+                  data-param="delayFeedback"
+                  data-min="0"
+                  data-max="0.8"
+                  data-value="0"
+                ></div>
+                <span class="label">DLY FB</span>
               </div>
             </div>
           </div>
 
-          <!-- Knobs Row: Cutoff, Resonance, Volume -->
-          <div class="control-row knobs-row">
-            <div class="knob-group">
-              <div
-                id="knob-cutoff"
-                class="knob"
-                data-param="cutoff"
-                data-min="100"
-                data-max="5000"
-                data-value="2000"
-              ></div>
-              <span class="label">CUTOFF</span>
-            </div>
-            <div class="knob-group">
-              <div
-                id="knob-resonance"
-                class="knob"
-                data-param="resonance"
-                data-min="0"
-                data-max="30"
-                data-value="5"
-              ></div>
-              <span class="label">RES</span>
-            </div>
-            <div class="knob-group">
-              <div
-                id="knob-synth-vol"
-                class="knob"
-                data-param="synthVol"
-                data-min="0"
-                data-max="1"
-                data-value="0.5"
-              ></div>
-              <span class="label">VOL</span>
-            </div>
-          </div>
-
-          <!-- ADSR Envelope Curve Editor -->
-          <div class="control-row">
-            <div class="adsr-editor-wrapper">
-              <span class="label">ADSR ENVELOPE</span>
-              <div class="adsr-canvas-container">
-                <canvas id="adsr-canvas" width="240" height="100"></canvas>
+          <!-- SETTINGS Tab Content (always available) -->
+          <div id="left-tab-settings" class="left-tab-content">
+            <!-- Tempo & Swing Knobs -->
+            <div class="control-row knobs-row">
+              <div class="knob-group">
+                <div
+                  id="knob-tempo"
+                  class="knob"
+                  data-param="tempo"
+                  data-min="40"
+                  data-max="240"
+                  data-value="120"
+                ></div>
+                <span class="label">TEMPO</span>
               </div>
-              <div class="adsr-values" id="adsr-values"></div>
-            </div>
-          </div>
-
-          <!-- Octave -->
-          <div class="control-row">
-            <div class="octave-group">
-              <span class="label">OCTAVE</span>
-              <button id="btn-oct-down" class="small-btn">−</button>
-              <div class="led-row" id="oct-leds">
-                <div class="led"></div>
-                <div class="led active"></div>
-                <div class="led"></div>
-                <div class="led"></div>
-                <div class="led"></div>
+              <div class="knob-group">
+                <div
+                  id="knob-swing"
+                  class="knob"
+                  data-param="swing"
+                  data-min="0"
+                  data-max="100"
+                  data-value="0"
+                ></div>
+                <span class="label">SWING</span>
               </div>
-              <button id="btn-oct-up" class="small-btn">+</button>
             </div>
-          </div>
 
-          <!-- Delay -->
-          <div class="control-row knobs-row">
-            <div class="knob-group">
-              <div
-                id="knob-delay-time"
-                class="knob"
-                data-param="delayTime"
-                data-min="0.01"
-                data-max="0.5"
-                data-value="0.2"
-              ></div>
-              <span class="label">DLY TIME</span>
+            <!-- CV Clock Sync -->
+            <div class="control-row">
+              <div id="cv-clock-panel"></div>
             </div>
-            <div class="knob-group">
-              <div
-                id="knob-delay-fb"
-                class="knob"
-                data-param="delayFeedback"
-                data-min="0"
-                data-max="0.8"
-                data-value="0"
-              ></div>
-              <span class="label">DLY FB</span>
-            </div>
-          </div>
 
-          <!-- Tempo & Swing Knobs -->
-          <div class="control-row knobs-row">
-            <div class="knob-group">
-              <div
-                id="knob-tempo"
-                class="knob"
-                data-param="tempo"
-                data-min="40"
-                data-max="240"
-                data-value="120"
-              ></div>
-              <span class="label">TEMPO</span>
+            <!-- MIDI IN -->
+            <div class="control-row">
+              <div id="midi-in-panel"></div>
             </div>
-            <div class="knob-group">
-              <div
-                id="knob-swing"
-                class="knob"
-                data-param="swing"
-                data-min="0"
-                data-max="100"
-                data-value="0"
-              ></div>
-              <span class="label">SWING</span>
+
+            <!-- Preset SAVE/LOAD (moved from header) -->
+            <div class="control-row">
+              <div id="preset-panel" class="preset-settings-panel"></div>
             </div>
-          </div>
-
-          <!-- CV Clock Sync -->
-          <div class="control-row">
-            <div id="cv-clock-panel"></div>
-          </div>
-
-          <!-- MIDI IN -->
-          <div class="control-row">
-            <div id="midi-in-panel"></div>
           </div>
         </section>
 

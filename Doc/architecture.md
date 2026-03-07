@@ -63,7 +63,7 @@ graph TD
     subgraph "Sequencer Layer"
         SS["step-sequencer.js<br/>(16/32 Step / 再生制御)"]
         DM["drum-machine.js<br/>(6 Tracks / Pattern)"]
-        ARP["arpeggiator.js<br/>(L/R独立 / 1ショットADSR)"]
+        ARP["arpeggiator.js<br/>(L/R独立 / 常時オシレータ+ADSRカーブ)"]
     end
 
     subgraph "Synth Extensions"
@@ -136,8 +136,8 @@ graph LR
     end
 
     subgraph "音源 B: Arpeggiator"
-        OSC_ARP["Stereo Osc / BufferSource"]
-        ADSR_ARP["ADSR Envelope (Per Note)"]
+        OSC_ARP["Stereo Osc / BufferSource (常時起動)"]
+        ADSR_ARP["ADSR Curve Envelope (Per Note)"]
     end
 
     subgraph "音源 C: VCO Loop"
@@ -250,7 +250,9 @@ python -m http.server 3000
 
 画面全体（`100vh`）にフィットし、各パネル内で個別にスクロール(`overflow-y: auto`)するレイアウト設計。
 
-- **LEFT (260px)**: SYNTH パネル（波形選択、キーボード、オクターブ等）
+- **LEFT (260px)**:
+  - **SYNTH タブ**: SEQUENCER表示時のみ有効（WAVE選択、CUTOFF、ADSRカーブエディタ、Delay等）
+  - **SETTINGS タブ**: 共通設定（TEMPO、CV Sync、MIDI IN、プリセットSAVE/LOAD等）
 - **CENTER (1fr)**: タブ切り替え（横スクロール禁止 `overflow-x: hidden`）
   - **SEQUENCER タブ**: Step Sequencer (16/32step切替)
   - **DRUMS タブ**: 6トラック Drum Machine
@@ -264,7 +266,7 @@ python -m http.server 3000
 ### プリセット・パターン管理
 
 - **全体保存 (Preset Manager)**
-  - ヘッダーに 💾 SAVE / 📂 LOAD ボタン（JSONエクスポート/インポート）
+  - 左パネル SETTINGS タブ内に SAVE / LOAD ボタン（JSONエクスポート/インポート）
   - `localStorage` による自動保存（2秒遅延のデバウンス処理）
 - **パターンバンク (Pattern Bank)**
   - `SEQUENCER`, `DRUMS`, `VCO LOOP` の各モジュールに **8つのパターンスロット** (`[1]`〜`[8]`) を保有
@@ -274,20 +276,20 @@ python -m http.server 3000
 
 ## 主要モジュール概要
 
-| モジュール          | 責務                                       | グローバル変数名 |
-| ------------------- | ------------------------------------------ | ---------------- |
-| `audio-engine.js`   | AudioContext管理、シンセ/ドラム音源作成    | `audioEngine`    |
-| `audio-settings.js` | デバイス選択、レイテンシ設定、リミッター   | `audioSettings`  |
-| `effects-engine.js` | 10種のエフェクト処理とAudioNode管理        | `effectsEngine`  |
-| `step-sequencer.js` | 16/32ステップの記録・同期再生              | `stepSequencer`  |
-| `drum-machine.js`   | 6トラックのドラムパターン・一括制御        | `drumMachine`    |
-| `arpeggiator.js`    | L/R独立アルペジエータ (Draw波形・ADSR対応) | `arpeggiator`    |
-| `midi-out.js`       | Web MIDI API を介した外部出力管理          | `midiOut`        |
-| `vco-loop.js`       | 8パラメータ曲線エディタ、STEP時ADSR発火    | `vcoLoop`        |
-| `drawing-mode.js`   | 波形描画キャンバス（8/16スロット切替）     | `drawingMode`    |
-| `unim-search.js`    | Unim Unicode検索・グリフ適用               | `unimSearch`     |
-| `preset-manager.js` | プリセット保存/読込・パターンバンク管理    | `presetManager`  |
-| `app.js`            | 全モジュールの初期化                       | —                |
+| モジュール          | 責務                                                   | グローバル変数名 |
+| ------------------- | ------------------------------------------------------ | ---------------- |
+| `audio-engine.js`   | AudioContext管理、シンセ/ドラム音源作成                | `audioEngine`    |
+| `audio-settings.js` | デバイス選択、レイテンシ設定、リミッター               | `audioSettings`  |
+| `effects-engine.js` | 10種のエフェクト処理とAudioNode管理                    | `effectsEngine`  |
+| `step-sequencer.js` | 16/32ステップの記録・同期再生                          | `stepSequencer`  |
+| `drum-machine.js`   | 6トラックのドラムパターン・一括制御                    | `drumMachine`    |
+| `arpeggiator.js`    | L/R独立、常時オシレータ方式 (Draw波形・ADSRカーブ対応) | `arpeggiator`    |
+| `midi-out.js`       | Web MIDI API を介した外部出力管理                      | `midiOut`        |
+| `vco-loop.js`       | 8パラメータ曲線エディタ、STEP時ADSR発火                | `vcoLoop`        |
+| `drawing-mode.js`   | 波形描画キャンバス（8/16スロット切替）                 | `drawingMode`    |
+| `unim-search.js`    | Unim Unicode検索・グリフ適用                           | `unimSearch`     |
+| `preset-manager.js` | プリセット保存/読込・パターンバンク管理                | `presetManager`  |
+| `app.js`            | 全モジュールの初期化                                   | —                |
 
 ---
 

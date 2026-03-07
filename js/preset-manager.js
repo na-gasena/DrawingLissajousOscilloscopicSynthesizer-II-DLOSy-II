@@ -257,21 +257,15 @@ class PresetManager {
   // ===== UI =====
 
   buildUI() {
-    const header = document.getElementById('synth-header');
-    if (!header) return;
+    const panel = document.getElementById('preset-panel');
+    if (!panel) return;
 
-    // Insert save/load buttons into header controls
-    const controls = header.querySelector('.header-controls');
-    if (!controls) return;
-
-    const group = document.createElement('div');
-    group.className = 'preset-controls';
-    group.innerHTML = `
-      <button id="preset-save" class="small-btn" title="Save preset to file">💾 SAVE</button>
-      <button id="preset-load" class="small-btn" title="Load preset from file">📂 LOAD</button>
+    panel.innerHTML = `
+      <span class="label">PRESET</span>
+      <button id="preset-save" class="small-btn" title="Save preset to file">SAVE</button>
+      <button id="preset-load" class="small-btn" title="Load preset from file">LOAD</button>
       <span id="preset-status" class="preset-status"></span>
     `;
-    controls.appendChild(group);
 
     document.getElementById('preset-save')?.addEventListener('click', () => this.saveToFile());
     document.getElementById('preset-load')?.addEventListener('click', () => this.loadFromFile());
