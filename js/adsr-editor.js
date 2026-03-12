@@ -1,6 +1,6 @@
 /**
  * DLOSy20 - ADSR Curve Editor
- * Visual envelope editor with draggable control points
+ * Visual envelope editor with 4 draggable control points (A, D, S, R)
  */
 
 class ADSREditor {
@@ -10,10 +10,10 @@ class ADSREditor {
     this.dragging = null; // 'attack' | 'decay' | 'sustain' | 'release' | null
 
     // Normalized positions (0-1)
-    this.attack  = 0.05;   // x position of peak
-    this.decay   = 0.15;   // width of decay section
+    this.attack  = 0.05;   // x position of peak (attack time)
+    this.decay   = 0.15;   // width of decay section (decay time)
     this.sustain = 0.3;    // y level (0=bottom, 1=top)
-    this.release = 0.2;    // width of release section
+    this.release = 0.2;    // width of release section (release time)
 
     // Mapping ranges (seconds/level)
     this.ranges = {
@@ -68,7 +68,7 @@ class ADSREditor {
     const x0 = this.pad.left;
     const y0 = this.pad.top;
 
-    // Divide horizontal space: A=25%, D=25%, S=25%, R=25% (weighted by normalized values)
+    // Divide horizontal space proportionally
     const totalTime = this.attack + this.decay + 0.3 + this.release;
     const scale = w / Math.max(totalTime, 0.01);
 
@@ -80,7 +80,7 @@ class ADSREditor {
     return {
       start:   { x: x0,  y: y0 + h },                        // 0,0
       peak:    { x: aX,  y: y0 },                             // Attack peak
-      sustain: { x: dX,  y: y0 + h * (1 - this.sustain) },   // After decay
+      decay:   { x: dX,  y: y0 + h * (1 - this.sustain) },   // Decay end = sustain level start
       hold:    { x: sX,  y: y0 + h * (1 - this.sustain) },   // Sustain hold end
       end:     { x: rX,  y: y0 + h },                        // Release end
       w, h, x0, y0,
@@ -114,7 +114,7 @@ class ADSREditor {
     ctx.beginPath();
     ctx.moveTo(p.start.x, p.start.y);
     ctx.lineTo(p.peak.x, p.peak.y);
-    ctx.lineTo(p.sustain.x, p.sustain.y);
+    ctx.lineTo(p.decay.x, p.decay.y);
     ctx.lineTo(p.hold.x, p.hold.y);
     ctx.lineTo(p.end.x, p.end.y);
     ctx.lineTo(p.end.x, p.start.y);
@@ -129,7 +129,7 @@ class ADSREditor {
     ctx.beginPath();
     ctx.moveTo(p.start.x, p.start.y);
     ctx.lineTo(p.peak.x, p.peak.y);
-    ctx.lineTo(p.sustain.x, p.sustain.y);
+    ctx.lineTo(p.decay.x, p.decay.y);
     ctx.lineTo(p.hold.x, p.hold.y);
     ctx.lineTo(p.end.x, p.end.y);
     ctx.stroke();
@@ -140,15 +140,16 @@ class ADSREditor {
     ctx.font = '8px Share Tech Mono, monospace';
     ctx.textAlign = 'center';
     ctx.fillText('A', (p.start.x + p.peak.x) / 2, ch - 2);
-    ctx.fillText('D', (p.peak.x + p.sustain.x) / 2, ch - 2);
-    ctx.fillText('S', (p.sustain.x + p.hold.x) / 2, ch - 2);
+    ctx.fillText('D', (p.peak.x + p.decay.x) / 2, ch - 2);
+    ctx.fillText('S', (p.decay.x + p.hold.x) / 2, ch - 2);
     ctx.fillText('R', (p.hold.x + p.end.x) / 2, ch - 2);
 
-    // Control points
+    // 4 Control points (A=orange, D=blue, S=green, R=red)
     const points = [
-      { pos: p.peak,    color: '#f5a623', label: 'A' },
-      { pos: p.sustain, color: '#4a9eff', label: 'D/S' },
-      { pos: p.end,     color: '#44d62c', label: 'R' },
+      { pos: p.peak,  color: '#f5a623', label: 'A' },
+      { pos: p.decay, color: '#4a9eff', label: 'D' },
+      { pos: p.hold,  color: '#44d62c', label: 'S' },
+      { pos: p.end,   color: '#e84545', label: 'R' },
     ];
 
     points.forEach(pt => {
@@ -196,9 +197,10 @@ class ADSREditor {
 
     const dist = (a, b) => Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
 
-    if (dist(pos, p.peak) < threshold)    return 'attack';
-    if (dist(pos, p.sustain) < threshold) return 'decay_sustain';
-    if (dist(pos, p.end) < threshold)     return 'release';
+    if (dist(pos, p.peak) < threshold)  return 'attack';
+    if (dist(pos, p.decay) < threshold) return 'decay';
+    if (dist(pos, p.hold) < threshold)  return 'sustain';
+    if (dist(pos, p.end) < threshold)   return 'release';
     return null;
   }
 
@@ -207,6 +209,12 @@ class ADSREditor {
     this.dragging = this.hitTest(pos);
     if (this.dragging) {
       this.canvas.style.cursor = 'grabbing';
+      // ドラッグ開始時のスケールを固定してフィードバックループを防ぐ
+      const p = this.getPoints();
+      this._dragScale = p.w / Math.max(this.attack + this.decay + 0.3 + this.release, 0.01);
+      this._dragX0 = p.x0;
+      this._dragY0 = p.y0;
+      this._dragH = p.h;
     }
   }
 
@@ -220,27 +228,28 @@ class ADSREditor {
       return;
     }
 
-    const p = this.getPoints();
-    const w = p.w;
-    const h = p.h;
+    // ドラッグ開始時に固定したスケールを使用（値変化によるスケール再計算を回避）
+    const scale = this._dragScale;
+    const x0 = this._dragX0;
+    const y0 = this._dragY0;
+    const h = this._dragH;
 
     if (this.dragging === 'attack') {
-      // Move attack point: x = attack time
-      const nx = Math.max(0.01, Math.min(0.8, (pos.x - p.x0) / (w / (this.attack + this.decay + 0.3 + this.release))));
+      // Move attack point: x = attack time (horizontal only, peak always at top)
+      const nx = Math.max(0.01, Math.min(0.8, (pos.x - x0) / scale));
       this.attack = nx;
-    } else if (this.dragging === 'decay_sustain') {
-      // Move decay/sustain point: x = decay length, y = sustain level
-      const totalTime = this.attack + this.decay + 0.3 + this.release;
-      const scale = w / Math.max(totalTime, 0.01);
-      const decayX = (pos.x - p.x0) / scale - this.attack;
+    } else if (this.dragging === 'decay') {
+      // Move decay end point: x = decay length, y = sustain level
+      const decayX = (pos.x - x0) / scale - this.attack;
       this.decay = Math.max(0.01, Math.min(0.8, decayX));
-      this.sustain = Math.max(0, Math.min(1, 1 - (pos.y - p.y0) / h));
+      this.sustain = Math.max(0, Math.min(1, 1 - (pos.y - y0) / h));
+    } else if (this.dragging === 'sustain') {
+      // Move sustain hold end: y = sustain level only (vertical drag)
+      this.sustain = Math.max(0, Math.min(1, 1 - (pos.y - y0) / h));
     } else if (this.dragging === 'release') {
-      // Move release point: x = release length
-      const totalTime = this.attack + this.decay + 0.3 + this.release;
-      const scale = w / Math.max(totalTime, 0.01);
+      // Move release point: x = release length (horizontal from hold end)
       const holdEndX = this.attack + this.decay + 0.3;
-      const relX = (pos.x - p.x0) / scale - holdEndX;
+      const relX = (pos.x - x0) / scale - holdEndX;
       this.release = Math.max(0.01, Math.min(0.8, relX));
     }
 
@@ -251,6 +260,7 @@ class ADSREditor {
 
   onMouseUp() {
     this.dragging = null;
+    this._dragScale = null;
     this.canvas.style.cursor = 'crosshair';
   }
 }

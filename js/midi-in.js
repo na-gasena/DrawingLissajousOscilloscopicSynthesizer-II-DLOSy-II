@@ -1,14 +1,37 @@
 /**
  * DLOSy20 - MIDI IN
- * Receive MIDI keyboard input and route to synth / drums / parameters.
- * Shares midiAccess from midi-out.js.
+ * Receive MIDI keyboard input and route to synth / drums / arp / parameters.
+ * Supports 2 simultaneous MIDI input devices with independent modes and CC maps.
  */
 
 class MidiIn {
   constructor() {
     this.enabled = false;
+
+    // ===== Device 1 =====
     this.selectedInput = null;
-    this.mode = 'synth'; // 'synth' | 'drums' | 'assign'
+    this.mode = 'synth'; // 'synth' | 'drums' | 'arp'
+
+    // CC mapping IN1: ccNumber → { target, min, max }
+    this.ccMap = {
+      1:  { target: 'cutoff',    min: 100,   max: 5000 },
+      74: { target: 'resonance', min: 0,     max: 30   },
+      71: { target: 'attack',    min: 0.001, max: 0.5  },
+      72: { target: 'release',   min: 0.01,  max: 2.0  },
+      73: { target: 'decay',     min: 0.01,  max: 1.0  },
+      7:  { target: 'masterVol', min: 0,     max: 1    },
+    };
+    this.ccLearnActive = false;
+    this.ccLearnTarget = null;
+
+    // ===== Device 2 =====
+    this.selectedInput2 = null;
+    this.mode2 = 'synth'; // 'synth' | 'drums' | 'arp'
+
+    // CC mapping IN2: independent map
+    this.ccMap2 = {};
+    this.ccLearnActive2 = false;
+    this.ccLearnTarget2 = null;
 
     // Drum note map (General MIDI-ish)
     this.drumNoteMap = {
@@ -20,19 +43,23 @@ class MidiIn {
       37: 'rim', // C#1
     };
 
-    // CC mapping: ccNumber → { target, min, max }
-    this.ccMap = {
-      1:  { target: 'cutoff',    min: 100,   max: 5000 },
-      74: { target: 'resonance', min: 0,     max: 30   },
-      71: { target: 'attack',    min: 0.001, max: 0.5  },
-      72: { target: 'release',   min: 0.01,  max: 2.0  },
-      73: { target: 'decay',     min: 0.01,  max: 1.0  },
-      7:  { target: 'masterVol', min: 0,     max: 1    },
-    };
-
-    // CC Learn
-    this.ccLearnActive = false;
-    this.ccLearnTarget = null;
+    // Available CC Learn targets (for UI)
+    this.ccLearnTargets = [
+      { target: 'cutoff',    label: 'Cutoff',    min: 100,   max: 5000 },
+      { target: 'resonance', label: 'Resonance', min: 0,     max: 30   },
+      { target: 'attack',    label: 'Attack',    min: 0.001, max: 0.5  },
+      { target: 'decay',     label: 'Decay',     min: 0.01,  max: 1.0  },
+      { target: 'release',   label: 'Release',   min: 0.01,  max: 2.0  },
+      { target: 'masterVol', label: 'Master Vol', min: 0,     max: 1    },
+      { target: 'vcoLoop0',  label: 'VCO L1',    min: 0,     max: 1    },
+      { target: 'vcoLoop1',  label: 'VCO L2',    min: 0,     max: 1    },
+      { target: 'vcoLoop2',  label: 'VCO L3',    min: 0,     max: 1    },
+      { target: 'vcoLoop3',  label: 'VCO L4',    min: 0,     max: 1    },
+      { target: 'vcoLoop4',  label: 'VCO L5',    min: 0,     max: 1    },
+      { target: 'vcoLoop5',  label: 'VCO L6',    min: 0,     max: 1    },
+      { target: 'vcoLoop6',  label: 'VCO L7',    min: 0,     max: 1    },
+      { target: 'vcoLoop7',  label: 'VCO L8',    min: 0,     max: 1    },
+    ];
 
     // Active notes (for Note Off tracking)
     this.activeNotes = new Map(); // note => { osc, gain }
@@ -40,6 +67,7 @@ class MidiIn {
 
   async init() {
     this.buildUI();
+    this.connectMIDI();
   }
 
   // Called after midiAccess is available (from midi-out.js or standalone)
@@ -65,7 +93,7 @@ class MidiIn {
 
     this.midiAccess = midiAccess;
     this.populateInputs();
-    midiAccess.addEventListener('statechange', () => this.populateInputs());
+    midiAccess.onstatechange = () => this.populateInputs();
     this.updateStatus('Ready');
   }
 
@@ -79,13 +107,13 @@ class MidiIn {
     switch (msgType) {
       case 0x90: // Note On
         if (data2 > 0) {
-          this.onNoteOn(data1, data2);
+          this._dispatchNoteOn(data1, data2, this.mode);
         } else {
-          this.onNoteOff(data1);
+          this._dispatchNoteOff(data1, this.mode);
         }
         break;
       case 0x80: // Note Off
-        this.onNoteOff(data1);
+        this._dispatchNoteOff(data1, this.mode);
         break;
       case 0xB0: // CC
         this.onCC(data1, data2);
@@ -93,19 +121,49 @@ class MidiIn {
     }
   }
 
-  onNoteOn(note, velocity) {
-    if (this.mode === 'synth') {
-      this.playSynthNote(note, velocity);
-    } else if (this.mode === 'drums') {
-      this.triggerDrum(note);
+  handleMessage2(e) {
+    if (!this.enabled) return;
+    const [status, data1, data2] = e.data;
+    const msgType = status & 0xF0;
+
+    switch (msgType) {
+      case 0x90: // Note On
+        if (data2 > 0) {
+          this._dispatchNoteOn(data1, data2, this.mode2);
+        } else {
+          this._dispatchNoteOff(data1, this.mode2);
+        }
+        break;
+      case 0x80: // Note Off
+        this._dispatchNoteOff(data1, this.mode2);
+        break;
+      case 0xB0: // CC
+        this.onCC2(data1, data2);
+        break;
     }
   }
 
-  onNoteOff(note) {
-    if (this.mode === 'synth') {
-      this.stopSynthNote(note);
+  _dispatchNoteOn(note, velocity, mode) {
+    if (mode === 'synth') {
+      this.playSynthNote(note, velocity);
+    } else if (mode === 'drums') {
+      this.triggerDrum(note);
+    } else if (mode === 'arp') {
+      if (window.arpeggiator && arpeggiator.enabled) arpeggiator.addNote(note);
     }
   }
+
+  _dispatchNoteOff(note, mode) {
+    if (mode === 'synth') {
+      this.stopSynthNote(note);
+    } else if (mode === 'arp') {
+      if (window.arpeggiator && arpeggiator.enabled) arpeggiator.removeNote(note);
+    }
+  }
+
+  // Legacy wrappers (kept for internal compatibility)
+  onNoteOn(note, velocity) { this._dispatchNoteOn(note, velocity, this.mode); }
+  onNoteOff(note)          { this._dispatchNoteOff(note, this.mode); }
 
   // ===== SYNTH MODE =====
 
@@ -208,27 +266,61 @@ class MidiIn {
     }
   }
 
-  // ===== CC HANDLING =====
+  // ===== CC HANDLING (IN1) =====
 
   onCC(ccNumber, value) {
-    // CC Learn
+    // CC Learn IN1
     if (this.ccLearnActive && this.ccLearnTarget) {
       this.ccMap[ccNumber] = this.ccLearnTarget;
       this.ccLearnActive = false;
       this.ccLearnTarget = null;
-      this.updateStatus('CC' + ccNumber + ' mapped');
+      this.updateStatus('CC' + ccNumber + ' → IN1 mapped');
       document.getElementById('midi-in-learn')?.classList.remove('active');
+      const learnSelect = document.getElementById('midi-in-learn-target');
+      if (learnSelect) learnSelect.value = '';
       return;
     }
 
-    const mapping = this.ccMap[ccNumber];
-    if (!mapping || !window.audioEngine) return;
+    this._applyCC(ccNumber, value, this.ccMap);
+  }
+
+  // ===== CC HANDLING (IN2) =====
+
+  onCC2(ccNumber, value) {
+    // CC Learn IN2
+    if (this.ccLearnActive2 && this.ccLearnTarget2) {
+      this.ccMap2[ccNumber] = this.ccLearnTarget2;
+      this.ccLearnActive2 = false;
+      this.ccLearnTarget2 = null;
+      this.updateStatus('CC' + ccNumber + ' → IN2 mapped');
+      document.getElementById('midi-in-learn')?.classList.remove('active');
+      const learnSelect = document.getElementById('midi-in-learn-target');
+      if (learnSelect) learnSelect.value = '';
+      return;
+    }
+
+    this._applyCC(ccNumber, value, this.ccMap2);
+  }
+
+  _applyCC(ccNumber, value, map) {
+    const mapping = map[ccNumber];
+    if (!mapping) return;
 
     const normalized = value / 127;
+    const param = mapping.target;
+
+    // VCO LOOP control points (vcoLoop0 - vcoLoop7)
+    const vcoMatch = param.match(/^vcoLoop(\d)$/);
+    if (vcoMatch && window.vcoLoop) {
+      const sliderIdx = parseInt(vcoMatch[1]);
+      vcoLoop.setControlPointFromMidi(sliderIdx, normalized);
+      return;
+    }
+
+    if (!window.audioEngine) return;
     const val = mapping.min + normalized * (mapping.max - mapping.min);
 
     // Apply to AudioEngine param
-    const param = mapping.target;
     if (param === 'cutoff' && audioEngine.filter) {
       audioEngine.params.cutoff = val;
       audioEngine.filter.frequency.value = val;
@@ -238,6 +330,8 @@ class MidiIn {
     } else if (param === 'masterVol' && audioEngine.masterGain) {
       audioEngine.params.masterVol = val;
       audioEngine.masterGain.gain.value = val;
+    } else if (param === 'masterFreqShift' && window.stepSequencer) {
+      stepSequencer.masterFreqShift = val;
     } else if (audioEngine.params[param] !== undefined) {
       audioEngine.params[param] = val;
     }
@@ -260,35 +354,78 @@ class MidiIn {
       <div class="midi-in-controls">
         <div class="midi-in-row">
           <button id="midi-in-toggle" class="small-btn">MIDI IN</button>
+          <span id="midi-in-status" class="midi-status">Off</span>
+        </div>
+
+        <div class="midi-in-row midi-in-device-row">
+          <span class="midi-label">IN1</span>
           <select id="midi-in-select" class="midi-select">
             <option value="">-- No Device --</option>
           </select>
         </div>
         <div class="midi-in-row">
+          <span class="midi-label">MOD1</span>
           <button id="midi-in-mode-synth" class="small-btn active">SYNTH</button>
           <button id="midi-in-mode-drums" class="small-btn">DRUMS</button>
-          <button id="midi-in-learn" class="small-btn">CC Learn</button>
+          <button id="midi-in-mode-arp" class="small-btn">ARP</button>
+        </div>
+
+        <div class="midi-in-row midi-in-device-row">
+          <span class="midi-label">IN2</span>
+          <select id="midi-in-select2" class="midi-select">
+            <option value="">-- No Device --</option>
+          </select>
         </div>
         <div class="midi-in-row">
-          <span id="midi-in-status" class="midi-status">Off</span>
+          <span class="midi-label">MOD2</span>
+          <button id="midi-in-mode2-synth" class="small-btn active">SYNTH</button>
+          <button id="midi-in-mode2-drums" class="small-btn">DRUMS</button>
+          <button id="midi-in-mode2-arp" class="small-btn">ARP</button>
+        </div>
+
+        <div class="midi-in-row">
+          <select id="midi-in-learn-dev" class="midi-select" title="CC Learn device">
+            <option value="1">IN1 CC Learn</option>
+            <option value="2">IN2 CC Learn</option>
+          </select>
+        </div>
+        <div class="midi-in-row">
+          <select id="midi-in-learn-target" class="midi-select" title="CC Learn target">
+            <option value="">CC Learn...</option>
+          </select>
+          <button id="midi-in-learn" class="small-btn">LEARN</button>
         </div>
       </div>
     `;
+
+    // Populate CC Learn target select
+    const learnSelect = document.getElementById('midi-in-learn-target');
+    if (learnSelect) {
+      this.ccLearnTargets.forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = t.target;
+        opt.textContent = t.label;
+        learnSelect.appendChild(opt);
+      });
+    }
 
     // Toggle
     document.getElementById('midi-in-toggle')?.addEventListener('click', () => {
       this.enabled = !this.enabled;
       document.getElementById('midi-in-toggle')?.classList.toggle('midi-active', this.enabled);
       this.updateStatus(this.enabled ? 'ON' : 'Off');
-      if (this.enabled && !this.midiAccess) {
-        this.connectMIDI();
+      if (this.enabled) {
+        if (!this.midiAccess) {
+          this.connectMIDI();
+        } else {
+          this.populateInputs();
+        }
       }
     });
 
-    // Input device select
+    // Input device 1 select
     document.getElementById('midi-in-select')?.addEventListener('change', (e) => {
       const id = e.target.value;
-      // Detach old
       if (this.selectedInput) {
         this.selectedInput.onmidimessage = null;
       }
@@ -302,15 +439,59 @@ class MidiIn {
       }
     });
 
-    // Mode buttons
+    // Input device 2 select
+    document.getElementById('midi-in-select2')?.addEventListener('change', (e) => {
+      const id = e.target.value;
+      if (this.selectedInput2) {
+        this.selectedInput2.onmidimessage = null;
+      }
+      if (this.midiAccess && id) {
+        this.selectedInput2 = this.midiAccess.inputs.get(id);
+        if (this.selectedInput2) {
+          this.selectedInput2.onmidimessage = (ev) => this.handleMessage2(ev);
+        }
+      } else {
+        this.selectedInput2 = null;
+      }
+    });
+
+    // Mode buttons IN1
     document.getElementById('midi-in-mode-synth')?.addEventListener('click', () => this.setMode('synth'));
     document.getElementById('midi-in-mode-drums')?.addEventListener('click', () => this.setMode('drums'));
+    document.getElementById('midi-in-mode-arp')?.addEventListener('click',   () => this.setMode('arp'));
+
+    // Mode buttons IN2
+    document.getElementById('midi-in-mode2-synth')?.addEventListener('click', () => this.setMode2('synth'));
+    document.getElementById('midi-in-mode2-drums')?.addEventListener('click', () => this.setMode2('drums'));
+    document.getElementById('midi-in-mode2-arp')?.addEventListener('click',   () => this.setMode2('arp'));
 
     // CC Learn
     document.getElementById('midi-in-learn')?.addEventListener('click', () => {
-      this.ccLearnActive = !this.ccLearnActive;
-      document.getElementById('midi-in-learn')?.classList.toggle('active', this.ccLearnActive);
-      this.updateStatus(this.ccLearnActive ? 'CC Learn: turn knob...' : 'Ready');
+      const learnSelect = document.getElementById('midi-in-learn-target');
+      const targetName = learnSelect ? learnSelect.value : '';
+      if (!targetName) {
+        this.updateStatus('Select target first');
+        return;
+      }
+      const targetDef = this.ccLearnTargets.find(t => t.target === targetName);
+      if (!targetDef) return;
+
+      const devSelect = document.getElementById('midi-in-learn-dev');
+      const dev = devSelect ? devSelect.value : '1';
+      const entry = { target: targetDef.target, min: targetDef.min, max: targetDef.max };
+
+      if (dev === '2') {
+        this.ccLearnTarget2 = entry;
+        this.ccLearnActive2 = true;
+        this.ccLearnActive = false;
+      } else {
+        this.ccLearnTarget = entry;
+        this.ccLearnActive = true;
+        this.ccLearnActive2 = false;
+      }
+
+      document.getElementById('midi-in-learn')?.classList.add('active');
+      this.updateStatus('CC Learn IN' + dev + ': move ' + targetDef.label + '...');
     });
   }
 
@@ -318,26 +499,46 @@ class MidiIn {
     this.mode = mode;
     document.getElementById('midi-in-mode-synth')?.classList.toggle('active', mode === 'synth');
     document.getElementById('midi-in-mode-drums')?.classList.toggle('active', mode === 'drums');
+    document.getElementById('midi-in-mode-arp')?.classList.toggle('active',   mode === 'arp');
+  }
+
+  setMode2(mode) {
+    this.mode2 = mode;
+    document.getElementById('midi-in-mode2-synth')?.classList.toggle('active', mode === 'synth');
+    document.getElementById('midi-in-mode2-drums')?.classList.toggle('active', mode === 'drums');
+    document.getElementById('midi-in-mode2-arp')?.classList.toggle('active',   mode === 'arp');
   }
 
   populateInputs() {
-    const select = document.getElementById('midi-in-select');
-    if (!select || !this.midiAccess) return;
+    const select  = document.getElementById('midi-in-select');
+    const select2 = document.getElementById('midi-in-select2');
+    if (!this.midiAccess) return;
 
-    select.innerHTML = '<option value="">-- No Device --</option>';
-    this.midiAccess.inputs.forEach(input => {
-      const opt = document.createElement('option');
-      opt.value = input.id;
-      opt.textContent = input.name || `Input ${input.id}`;
-      select.appendChild(opt);
-    });
+    const buildOptions = (sel) => {
+      if (!sel) return;
+      const currentVal = sel.value;
+      sel.innerHTML = '<option value="">-- No Device --</option>';
+      this.midiAccess.inputs.forEach(input => {
+        const opt = document.createElement('option');
+        opt.value = input.id;
+        opt.textContent = input.name || `Input ${input.id}`;
+        sel.appendChild(opt);
+      });
+      // Restore previous selection if still available
+      if (currentVal && sel.querySelector(`option[value="${currentVal}"]`)) {
+        sel.value = currentVal;
+      }
+    };
 
-    // Auto-select first
+    buildOptions(select);
+    buildOptions(select2);
+
+    // Auto-select first device for IN1 if not yet set
     if (this.midiAccess.inputs.size > 0 && !this.selectedInput) {
       const first = this.midiAccess.inputs.values().next().value;
       this.selectedInput = first;
       first.onmidimessage = (ev) => this.handleMessage(ev);
-      select.value = first.id;
+      if (select) select.value = first.id;
     }
   }
 

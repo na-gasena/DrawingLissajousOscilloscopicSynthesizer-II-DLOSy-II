@@ -6,7 +6,7 @@
 // ===== Note Table (C2-C6) =====
 const SEQ_NOTES = [];
 const SEQ_NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
-for (let oct = 2; oct <= 6; oct++) {
+for (let oct = 1; oct <= 6; oct++) {
   SEQ_NOTE_NAMES.forEach(n => {
     const midi = (oct + 1) * 12 + SEQ_NOTE_NAMES.indexOf(n);
     SEQ_NOTES.push({ name: `${n}${oct}`, freq: 440 * Math.pow(2, (midi - 69) / 12), midi });
@@ -27,6 +27,11 @@ const SCALES = {
   chromatic:   [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
 };
 
+// ===== Wave Type Icons =====
+const WAVE_ICONS = {
+  sine: '∿', triangle: '△', square: '□', sawtooth: '╱', drawing: '✎'
+};
+
 class StepSequencer {
   constructor() {
     this.numSteps = 16;
@@ -38,6 +43,9 @@ class StepSequencer {
     // Sequence data
     this.steps = [];
     this.resetSteps(this.numSteps);
+
+    // Master frequency shift (semitones, -24 to +24)
+    this.masterFreqShift = 0;
 
     // Pattern bank (8 slots)
     this.activePattern = 0;
@@ -183,6 +191,12 @@ class StepSequencer {
       note.textContent = this.steps[i].on ? this.steps[i].note : '';
       pad.appendChild(note);
 
+      // Wave icon
+      const wave = document.createElement('div');
+      wave.className = 'pad-wave';
+      wave.textContent = this.steps[i].on ? (WAVE_ICONS[this.steps[i].waveType] || '') : '';
+      pad.appendChild(wave);
+
       // Step number
       const num = document.createElement('div');
       num.className = 'pad-num';
@@ -221,8 +235,21 @@ class StepSequencer {
     document.getElementById('btn-seq-random')?.addEventListener('click', () => {
       const scaleSelect = document.getElementById('seq-scale-select');
       const scaleName = scaleSelect ? scaleSelect.value : 'major';
-      this.generateRandom(scaleName);
+      const octSelect = document.getElementById('seq-oct-select');
+      const octStr = octSelect ? octSelect.value : '3,4,5';
+      const octaves = octStr.split(',').map(Number);
+      this.generateRandom(scaleName, octaves);
     });
+
+    // Master frequency shift knob
+    const masterFreqKnob = document.getElementById('knob-master-freq');
+    if (masterFreqKnob) {
+      // The knob UI component handles data-param="masterFreqShift"
+      // We listen for input events to update our local property
+      masterFreqKnob.addEventListener('input', () => {
+        this.masterFreqShift = parseFloat(masterFreqKnob.dataset.value || '0');
+      });
+    }
   }
 
   toggleStep(index) {
@@ -252,6 +279,19 @@ class StepSequencer {
     this._dragMoved = false;
     this.editStep = i;
 
+    // Show drag hint (↕) on the pad
+    const pad = this.padElements[i];
+    if (pad) {
+      let hint = pad.querySelector('.pad-drag-hint');
+      if (!hint) {
+        hint = document.createElement('div');
+        hint.className = 'pad-drag-hint';
+        hint.textContent = '↕';
+        pad.appendChild(hint);
+      }
+      hint.style.display = 'block';
+    }
+
     window.addEventListener('mousemove', this._boundPadMouseMove);
     window.addEventListener('mouseup', this._boundPadMouseUp);
   }
@@ -265,6 +305,7 @@ class StepSequencer {
     if (this._dragMoved) {
       const newIdx = Math.max(0, Math.min(SEQ_NOTES.length - 1, this._dragStartNoteIdx + noteOffset));
       const note = SEQ_NOTES[newIdx];
+      const semitoneOffset = newIdx - this._dragStartNoteIdx;
 
       this.steps[this._dragIndex].freq = note.freq;
       this.steps[this._dragIndex].note = note.name;
@@ -275,8 +316,9 @@ class StepSequencer {
       // Add dragging class
       this.padElements[this._dragIndex]?.classList.add('dragging');
 
-      // Show tooltip
-      this._showTooltip(note.name, e);
+      // Show tooltip with note + offset, anchored above pad
+      const offsetStr = semitoneOffset > 0 ? ` +${semitoneOffset}` : semitoneOffset < 0 ? ` ${semitoneOffset}` : '';
+      this._showTooltip(note.name + offsetStr, this._dragIndex);
       this.updateUI();
     }
   }
@@ -286,8 +328,13 @@ class StepSequencer {
       // Click: toggle ON/OFF
       this.toggleStep(this._dragIndex);
     }
-    // Remove dragging class
-    this.padElements[this._dragIndex]?.classList.remove('dragging');
+    // Remove dragging class & hide hint
+    const pad = this.padElements[this._dragIndex];
+    if (pad) {
+      pad.classList.remove('dragging');
+      const hint = pad.querySelector('.pad-drag-hint');
+      if (hint) hint.style.display = 'none';
+    }
     this._hideTooltip();
     this._dragIndex = -1;
     window.removeEventListener('mousemove', this._boundPadMouseMove);
@@ -300,15 +347,20 @@ class StepSequencer {
     this.updateUI();
   }
 
-  _showTooltip(text, e) {
+  _showTooltip(text, padIndex) {
     if (!this._tooltip) {
       this._tooltip = document.createElement('div');
       this._tooltip.className = 'step-pad-tooltip';
       document.body.appendChild(this._tooltip);
     }
     this._tooltip.textContent = text;
-    this._tooltip.style.left = e.clientX + 'px';
-    this._tooltip.style.top = e.clientY + 'px';
+    // Anchor above the pad element
+    const pad = this.padElements[padIndex];
+    if (pad) {
+      const rect = pad.getBoundingClientRect();
+      this._tooltip.style.left = (rect.left + rect.width / 2) + 'px';
+      this._tooltip.style.top = rect.top + 'px';
+    }
     this._tooltip.style.display = 'block';
   }
 
@@ -320,10 +372,9 @@ class StepSequencer {
 
   // ===== RANDOM PATTERN GENERATION =====
 
-  generateRandom(scaleName = 'major') {
+  generateRandom(scaleName = 'major', octaves = [3, 4, 5]) {
     const scale = SCALES[scaleName] || SCALES.major;
     const density = 0.5 + Math.random() * 0.3; // 50-80%
-    const octaves = [3, 4, 5];
 
     for (let i = 0; i < this.numSteps; i++) {
       if (Math.random() < density) {
@@ -495,9 +546,12 @@ class StepSequencer {
   playCurrentStep(midiTimestamp) {
     const step = this.steps[this.currentStep];
     if (step.on && step.freq > 0) {
+      // Apply master frequency shift (semitones)
+      const shiftedFreq = step.freq * Math.pow(2, this.masterFreqShift / 12);
+
       if (step.waveType === 'drawing' && window.drawingMode) {
-        // Auto-switch drawing slot for sequencing
-        if (step.drawingSlot !== drawingMode.activeSlot) {
+        // AutoCycle OFF 時のみ per-step のスロット割り当てを適用（AutoCycle との競合を防ぐ）
+        if (!drawingMode.autoSlotCycle && step.drawingSlot !== drawingMode.activeSlot) {
           drawingMode.activeSlot = step.drawingSlot;
           drawingMode.redrawCanvas();
           drawingMode.updateWaveformPreview();
@@ -507,21 +561,21 @@ class StepSequencer {
           });
         }
         // Drawing wave: play with stereo AudioBuffer (L=waveX, R=waveY)
-        const slot = drawingMode.slots[step.drawingSlot];
+        const slot = drawingMode.slots[drawingMode.activeSlot];
         if (slot && slot.waveX.length > 0) {
-          audioEngine.playFreqWithDrawing(step.freq, slot.waveX, slot.waveY);
+          audioEngine.playFreqWithDrawing(shiftedFreq, slot.waveX, slot.waveY);
         } else {
           // Fallback to sine if no drawing data
           const originalWave = audioEngine.params.waveType;
           audioEngine.params.waveType = 'sine';
-          audioEngine.playFreq(step.freq);
+          audioEngine.playFreq(shiftedFreq);
           audioEngine.params.waveType = originalWave;
         }
       } else {
         // Standard wave types
         const originalWave = audioEngine.params.waveType;
         audioEngine.params.waveType = step.waveType;
-        audioEngine.playFreq(step.freq);
+        audioEngine.playFreq(shiftedFreq);
         audioEngine.params.waveType = originalWave;
       }
     }
@@ -564,6 +618,9 @@ class StepSequencer {
       // Update note name display
       const noteEl = pad.querySelector('.pad-note');
       if (noteEl) noteEl.textContent = step.on ? step.note : '';
+      // Update wave icon
+      const waveEl = pad.querySelector('.pad-wave');
+      if (waveEl) waveEl.textContent = step.on ? (WAVE_ICONS[step.waveType] || '') : '';
     });
   }
 

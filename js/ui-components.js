@@ -71,6 +71,9 @@ class UIComponents {
       audioEngine.params.tempo = newValue;
       document.getElementById('tempo-value').textContent = Math.round(newValue);
       if (window.stepSequencer) stepSequencer.updateTempo();
+    } else if (this.activeKnob === 'masterFreqShift') {
+      audioEngine.params.masterFreqShift = newValue;
+      if (window.stepSequencer) stepSequencer.masterFreqShift = newValue;
     } else {
       audioEngine.setParam(this.activeKnob, newValue);
     }
@@ -94,6 +97,9 @@ class UIComponents {
       audioEngine.params.tempo = newValue;
       document.getElementById('tempo-value').textContent = Math.round(newValue);
       if (window.stepSequencer) stepSequencer.updateTempo();
+    } else if (this.activeKnob === 'masterFreqShift') {
+      audioEngine.params.masterFreqShift = newValue;
+      if (window.stepSequencer) stepSequencer.masterFreqShift = newValue;
     } else {
       audioEngine.setParam(this.activeKnob, newValue);
     }

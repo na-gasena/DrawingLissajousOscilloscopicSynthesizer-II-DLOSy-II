@@ -503,6 +503,20 @@ class VCOLoop {
     this.drawCurve();
   }
 
+  flipVertical() {
+    const curve = this.curves[this.activeParam];
+    if (!curve) return;
+    curve.points = curve.points.map(p => ({x: p.x, y: 1 - p.y}));
+    this.drawCurve();
+  }
+
+  flipHorizontal() {
+    const curve = this.curves[this.activeParam];
+    if (!curve) return;
+    curve.points = curve.points.map(p => ({x: 1 - p.x, y: p.y})).reverse();
+    this.drawCurve();
+  }
+
   buildParamTabs() {
     const tabContainer = document.getElementById('vco-param-tabs');
     if (!tabContainer) return;
@@ -541,6 +555,25 @@ class VCOLoop {
       btn.addEventListener('click', () => this.applyPreset(name));
       presetRow.appendChild(btn);
     });
+
+    // Separator + Flip buttons
+    const sep = document.createElement('span');
+    sep.style.cssText = 'width:1px;height:18px;background:var(--border-panel);margin:0 4px;align-self:center;';
+    presetRow.appendChild(sep);
+
+    const flipV = document.createElement('button');
+    flipV.className = 'vco-preset-btn';
+    flipV.textContent = '↕';
+    flipV.title = 'Flip Vertical';
+    flipV.addEventListener('click', () => this.flipVertical());
+    presetRow.appendChild(flipV);
+
+    const flipH = document.createElement('button');
+    flipH.className = 'vco-preset-btn';
+    flipH.textContent = '↔';
+    flipH.title = 'Flip Horizontal';
+    flipH.addEventListener('click', () => this.flipHorizontal());
+    presetRow.appendChild(flipH);
   }
 
   initCanvas() {
@@ -871,6 +904,61 @@ class VCOLoop {
       this.curves[this.activeParam].points.splice(idx, 1);
       this.drawCurve();
     }
+  }
+
+  // ===== MIDI CONTROL (8 slider points) =====
+
+  /**
+   * Set a control point from MIDI slider.
+   * sliderIndex: 0-7, normalizedValue: 0.0-1.0
+   */
+  setControlPointFromMidi(sliderIndex, normalizedValue) {
+    if (sliderIndex < 0 || sliderIndex > 7) return;
+    const curve = this.curves[this.activeParam];
+    if (!curve) return;
+
+    const targetX = sliderIndex / 7;
+    const threshold = 0.02;
+
+    // Find existing point near targetX
+    let found = -1;
+    for (let i = 0; i < curve.points.length; i++) {
+      if (Math.abs(curve.points[i].x - targetX) < threshold) {
+        found = i;
+        break;
+      }
+    }
+
+    if (found >= 0) {
+      curve.points[found].y = normalizedValue;
+    } else {
+      // Insert new point at correct sorted position
+      const newPt = { x: targetX, y: normalizedValue };
+      let insertIdx = curve.points.length;
+      for (let i = 0; i < curve.points.length; i++) {
+        if (curve.points[i].x > targetX) {
+          insertIdx = i;
+          break;
+        }
+      }
+      curve.points.splice(insertIdx, 0, newPt);
+    }
+
+    this.drawCurve();
+  }
+
+  /**
+   * Reset the active curve to an 8-point MIDI grid (evenly spaced).
+   */
+  resetToMidiGrid() {
+    const curve = this.curves[this.activeParam];
+    if (!curve) return;
+    const currentY = curve.points.length > 0 ? curve.points[0].y : 0.5;
+    curve.points = [];
+    for (let i = 0; i < 8; i++) {
+      curve.points.push({ x: i / 7, y: currentY });
+    }
+    this.drawCurve();
   }
 }
 

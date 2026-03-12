@@ -36,6 +36,7 @@ class AudioEngine {
       tempo: 120,
       swing: 0,
       octave: 1,
+      masterFreqShift: 0,
     };
 
     // Note frequencies (C3 to C4)

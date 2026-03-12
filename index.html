@@ -234,6 +234,28 @@
                     <option value="wholeTone">W.Tone</option>
                     <option value="chromatic">Chrom</option>
                   </select>
+                  <select id="seq-oct-select" class="seq-scale-select" title="Octave range">
+                    <option value="3,4,5" selected>C3-C5</option>
+                    <option value="1">C1</option>
+                    <option value="2">C2</option>
+                    <option value="3">C3</option>
+                    <option value="4">C4</option>
+                    <option value="5">C5</option>
+                    <option value="1,2,3">C1-C3</option>
+                    <option value="2,3,4">C2-C4</option>
+                    <option value="4,5,6">C4-C6</option>
+                  </select>
+                  <div class="knob-group knob-group-inline">
+                    <div
+                      id="knob-master-freq"
+                      class="knob"
+                      data-param="masterFreqShift"
+                      data-min="-24"
+                      data-max="24"
+                      data-value="0"
+                    ></div>
+                    <span class="label">PITCH</span>
+                  </div>
                   <button id="btn-steps-16" class="small-btn step-count-btn active">16</button>
                   <button id="btn-steps-32" class="small-btn step-count-btn">32</button>
                 </div>

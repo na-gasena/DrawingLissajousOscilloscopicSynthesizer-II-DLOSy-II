@@ -86,6 +86,17 @@ class Arpeggiator {
     for (let i = 0; i < this.tableSize; i++) {
       this.crushedTable[i] = Math.round(this.customTable[i] / q) * q;
     }
+    // 実行中のオシレーターに即時反映（drawing 波形以外）
+    if (this.isOscRunning && this.waveType !== 'drawing') {
+      if (this.glitchSteps < 64) {
+        const pw = this._createPeriodicWave();
+        if (this.oscL?.setPeriodicWave) this.oscL.setPeriodicWave(pw);
+        if (this.oscR?.setPeriodicWave) this.oscR.setPeriodicWave(pw);
+      } else {
+        if (this.oscL?.type !== undefined) this.oscL.type = this.waveType;
+        if (this.oscR?.type !== undefined) this.oscR.type = this.waveType;
+      }
+    }
   }
 
   // ===== OSCILLATOR MANAGEMENT =====
@@ -307,7 +318,14 @@ class Arpeggiator {
     const now = audioEngine.ctx.currentTime;
     while (this._nextStepTime < now + 0.05) {
       const note = this.getNextNote();
-      if (note !== null) this.noteOn(note);
+      if (note !== null) {
+        this.noteOn(note);
+        // ADSR エンベロープをゲインに適用
+        if (this.gainL && this.gainR) {
+          this._applyAdsrCurve(this.gainL.gain, this._nextStepTime, stepDur, this.volume);
+          this._applyAdsrCurve(this.gainR.gain, this._nextStepTime, stepDur, this.volume);
+        }
+      }
       this._nextStepTime += stepDur;
       this.updateKeyHighlights();
     }
