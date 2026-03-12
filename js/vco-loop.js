@@ -169,8 +169,9 @@ class VCOLoop {
         this.osc.connect(this._drawSplitter);
         this._drawSplitter.connect(this._drawPanL, 0); // Ch0(X) → 左
         this._drawSplitter.connect(this._drawPanR, 1); // Ch1(Y) → 右
-        this._drawPanL.connect(this.gain);
-        this._drawPanR.connect(this.gain);
+        this._drawPanL.connect(this.filter);
+        this._drawPanR.connect(this.filter);
+        this.filter.connect(this.gain);
       } else {
         // Fallback to sine
         this.osc = ctx.createOscillator();
@@ -285,8 +286,9 @@ class VCOLoop {
     newOsc.connect(this._drawSplitter);
     this._drawSplitter.connect(this._drawPanL, 0);
     this._drawSplitter.connect(this._drawPanR, 1);
-    this._drawPanL.connect(this.gain);
-    this._drawPanR.connect(this.gain);
+    this._drawPanL.connect(this.filter);
+    this._drawPanR.connect(this.filter);
+    // filter is already connected to gain from startOsc()
     newOsc.start();
 
     // Stop old osc

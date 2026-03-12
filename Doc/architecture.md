@@ -136,7 +136,7 @@ graph LR
     end
 
     subgraph "音源 B: Arpeggiator"
-        OSC_ARP["Stereo Osc / BufferSource (常時起動)"]
+        OSC_ARP["Dual Mono Osc (X/Y) / BufferSource (常時起動)"]
         ADSR_ARP["ADSR Curve Envelope (Per Note)"]
     end
 
@@ -168,6 +168,14 @@ graph LR
     FLT --> DLY_SEND --> MASTER
     MASTER --> FX_CHAIN --> MASTER_LIMIT --> OUT
 ```
+
+### ⚠️ Web Audio API ルーティングの重要ルール (SKILL)
+
+機能拡張の際、意図せず「フィルターが効かなくなる」「オシロスコープの図形が崩れる」といったリグレッションが発生するのを防ぐため、ルーティングに関するコアルールをスキルとして構造化しています。
+開発・保守時には必ず **`.agents/skills/web-audio-routing/SKILL.md`** を遵守してください。
+
+- **フィルターバイパスの禁止**: 音源ノードを切り替える際（例: 通常波形→DRAW波形）、出力ノード(`GainNode`)へ直接繋ぐのではなく、必ず `BiquadFilterNode` (`CUTOFF`/`RES`) を経由するようルーティングを確実に行ってください。
+- **ステレオ・ダウンミックスの回避**: オシロスコープ(XYモード)を正しく描画するため、DRAWモードの波形は1つのステレオバッファではなく、独立した2つのモノラルバッファ(`1ch`)を `StereoPannerNode` で左右に振り分ける **Dual Mono方式** を採用します。
 
 ---
 
