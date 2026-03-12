@@ -159,12 +159,26 @@ class VCOLoop {
         this.baseFreq = ctx.sampleRate / bufferLength;
         this.osc.playbackRate.value = 220 / this.baseFreq;
         this.isDrawingOsc = true;
+
+        // 明示的なステレオルーティング: L(waveX)→左, R(waveY)→右
+        this._drawSplitter = ctx.createChannelSplitter(2);
+        this._drawPanL = ctx.createStereoPanner();
+        this._drawPanR = ctx.createStereoPanner();
+        this._drawPanL.pan.value = -1;
+        this._drawPanR.pan.value = 1;
+        this.osc.connect(this._drawSplitter);
+        this._drawSplitter.connect(this._drawPanL, 0); // Ch0(X) → 左
+        this._drawSplitter.connect(this._drawPanR, 1); // Ch1(Y) → 右
+        this._drawPanL.connect(this.gain);
+        this._drawPanR.connect(this.gain);
       } else {
         // Fallback to sine
         this.osc = ctx.createOscillator();
         this.osc.type = 'sine';
         this.osc.frequency.value = 220;
         this.isDrawingOsc = false;
+        this.osc.connect(this.filter);
+        this.filter.connect(this.gain);
       }
     } else {
       // Standard oscillator
@@ -172,10 +186,10 @@ class VCOLoop {
       this.osc.type = this.waveType;
       this.osc.frequency.value = 220;
       this.isDrawingOsc = false;
+      this.osc.connect(this.filter);
+      this.filter.connect(this.gain);
     }
 
-    this.osc.connect(this.filter);
-    this.filter.connect(this.gain);
     this.gain.connect(audioEngine.masterGain);
 
     // Fade in
@@ -200,6 +214,13 @@ class VCOLoop {
     const filterRef = this.filter;
     const gainRef = this.gain;
 
+    const splitterRef = this._drawSplitter;
+    const panLRef = this._drawPanL;
+    const panRRef = this._drawPanR;
+    this._drawSplitter = null;
+    this._drawPanL = null;
+    this._drawPanR = null;
+
     setTimeout(() => {
       try {
         oscRef.stop();
@@ -207,6 +228,9 @@ class VCOLoop {
         filterRef.disconnect();
         gainRef.disconnect();
       } catch(e) {}
+      try { splitterRef?.disconnect(); } catch(e) {}
+      try { panLRef?.disconnect(); } catch(e) {}
+      try { panRRef?.disconnect(); } catch(e) {}
     }, this.fadeDuration * 1000 + 50);
 
     this.isOscRunning = false;
@@ -249,7 +273,20 @@ class VCOLoop {
     this.baseFreq = ctx.sampleRate / bufferLength;
     newOsc.playbackRate.value = oldOsc.playbackRate.value;
 
-    newOsc.connect(this.filter);
+    // 明示的なステレオルーティング: L(waveX)→左, R(waveY)→右
+    const oldSplitter = this._drawSplitter;
+    const oldPanL = this._drawPanL;
+    const oldPanR = this._drawPanR;
+    this._drawSplitter = ctx.createChannelSplitter(2);
+    this._drawPanL = ctx.createStereoPanner();
+    this._drawPanR = ctx.createStereoPanner();
+    this._drawPanL.pan.value = -1;
+    this._drawPanR.pan.value = 1;
+    newOsc.connect(this._drawSplitter);
+    this._drawSplitter.connect(this._drawPanL, 0);
+    this._drawSplitter.connect(this._drawPanR, 1);
+    this._drawPanL.connect(this.gain);
+    this._drawPanR.connect(this.gain);
     newOsc.start();
 
     // Stop old osc
@@ -257,6 +294,9 @@ class VCOLoop {
       oldOsc.stop();
       oldOsc.disconnect();
     } catch(e) {}
+    try { oldSplitter?.disconnect(); } catch(e) {}
+    try { oldPanL?.disconnect(); } catch(e) {}
+    try { oldPanR?.disconnect(); } catch(e) {}
 
     this.osc = newOsc;
   }

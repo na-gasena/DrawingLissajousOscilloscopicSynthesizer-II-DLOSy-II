@@ -69,16 +69,21 @@ class Arpeggiator {
   // ===== WAVE TABLE =====
 
   setDefaultWave(type) {
+    const wasDrawing = this.waveType === 'drawing';
     this.waveType = type;
-    if (type === 'drawing') return; // DrawMode uses slot data directly
+    if (type === 'drawing') {
+      if (this.isOscRunning) this._refreshOscType();
+      return;
+    }
     for (let i = 0; i < this.tableSize; i++) {
       const t = i / (this.tableSize - 1);
-      if (type === 'sine')         this.customTable[i] = Math.sin(2 * Math.PI * t);
+      if (type === 'sine')          this.customTable[i] = Math.sin(2 * Math.PI * t);
       else if (type === 'triangle') this.customTable[i] = 1 - 4 * Math.abs(t - 0.5);
       else if (type === 'square')   this.customTable[i] = t < 0.5 ? 1 : -1;
       else if (type === 'sawtooth') this.customTable[i] = 2 * t - 1;
     }
     this.applyGlitch();
+    if (wasDrawing && this.isOscRunning) this._refreshOscType();
   }
 
   applyGlitch() {
@@ -171,6 +176,16 @@ class Arpeggiator {
     this.oscR.connect(this.gainR);
     this.oscL.start();
     this.oscR.start();
+  }
+
+  // 実行中のオシレーターノードだけを再作成（gainL/gainR は保持）
+  _refreshOscType() {
+    if (!this.isOscRunning) return;
+    try { this.oscL?.stop(); } catch(e) {}
+    try { this.oscR?.stop(); } catch(e) {}
+    try { this.oscL?.disconnect(); } catch(e) {}
+    try { this.oscR?.disconnect(); } catch(e) {}
+    this._createOscNodes();
   }
 
   stopOsc() {
@@ -552,6 +567,9 @@ class Arpeggiator {
     document.getElementById('arp-vol-slider')?.addEventListener('input', (e) => {
       this.volume = parseInt(e.target.value) / 100;
       document.getElementById('arp-vol-val').textContent = parseInt(e.target.value) + '%';
+      // 演奏中のゲインをリアルタイム更新
+      if (this.gainL) this.gainL.gain.value = this.volume;
+      if (this.gainR) this.gainR.gain.value = this.volume;
     });
 
     // ADSR envelope editor (canvas)

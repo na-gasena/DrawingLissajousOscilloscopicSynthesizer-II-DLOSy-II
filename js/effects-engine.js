@@ -40,6 +40,15 @@ class EffectsEngine {
         ]
       },
       {
+        id: 'phaser', name: 'Phaser', category: 'signal',
+        desc: '位相シフトで音色を揺らす（LFO付き）',
+        params: [
+          { id: 'rate',     name: 'Rate',     min: 0.05, max: 5,   value: 0.5, step: 0.05 },
+          { id: 'depth',    name: 'Depth',    min: 0,    max: 1,   value: 0.7, step: 0.01 },
+          { id: 'feedback', name: 'Feedback', min: 0,    max: 0.9, value: 0.3, step: 0.01 },
+        ]
+      },
+      {
         id: 'rotate', name: 'Rotate', category: 'waveform',
         desc: 'XY波形座標を回転',
         params: [{ id: 'speed', name: 'Speed', min: 0, max: 1, value: 0.2, step: 0.01 }]
@@ -244,6 +253,29 @@ class EffectsEngine {
       }
     };
 
+    // --- Phaser (4-stage allpass + LFO) ---
+    this.phaserInput  = ctx.createGain();
+    this.phaserDry    = ctx.createGain();
+    this.phaserWet    = ctx.createGain();
+    this.phaserFb     = ctx.createGain();
+    this.phaserOutput = ctx.createGain();
+
+    const phaserCenterFreqs = [400, 800, 1200, 1600];
+    this.phaserStages = phaserCenterFreqs.map(f => {
+      const node = ctx.createBiquadFilter();
+      node.type = 'allpass';
+      node.frequency.value = f;
+      node.Q.value = 10;
+      return node;
+    });
+
+    this.phaserLfo     = ctx.createOscillator();
+    this.phaserLfoGain = ctx.createGain();
+    this.phaserLfo.type = 'sine';
+    this.phaserLfo.connect(this.phaserLfoGain);
+    this.phaserLfo.start();
+    this.updatePhaserParams();
+
     this.audioNodesReady = true;
     this.rebuildChain();
   }
@@ -270,6 +302,9 @@ class EffectsEngine {
       this.fxDelayFeedback,
       this.fxDelayWet,
       this.fxDelayDry,
+      this.phaserInput, this.phaserDry, this.phaserWet,
+      this.phaserFb, this.phaserOutput,
+      ...(this.phaserStages || []),
     ];
     for (const node of allNodes) {
       if (node) try { node.disconnect(); } catch(e) {}
@@ -287,6 +322,21 @@ class EffectsEngine {
     // Re-establish Wobble LFO connection
     this.wobbleLfo.connect(this.wobbleLfoGain);
     this.wobbleLfoGain.connect(this.wobbleNode.gain);
+
+    // Re-establish Phaser LFO + internal connections
+    if (this.phaserLfo && this.phaserStages) {
+      this.phaserLfo.connect(this.phaserLfoGain);
+      this.phaserStages.forEach(s => this.phaserLfoGain.connect(s.frequency));
+
+      this.phaserInput.connect(this.phaserDry);
+      this.phaserDry.connect(this.phaserOutput);
+      let prev = this.phaserInput;
+      this.phaserStages.forEach(s => { prev.connect(s); prev = s; });
+      prev.connect(this.phaserWet);
+      this.phaserWet.connect(this.phaserOutput);
+      prev.connect(this.phaserFb);
+      this.phaserFb.connect(this.phaserStages[0]);
+    }
 
     // Build chain: fxInput → [enabled effects in order] → fxOutput
     let current = ae.fxInput;
@@ -325,6 +375,10 @@ class EffectsEngine {
     if (this.effects.delay.enabled) {
       this.updateDelayParams();
       chain.push({ input: this.fxDelayInput, output: this.fxDelayOutput });
+    }
+    if (this.effects.phaser.enabled) {
+      this.updatePhaserParams();
+      chain.push({ input: this.phaserInput, output: this.phaserOutput });
     }
 
     // Connect the chain
@@ -368,6 +422,16 @@ class EffectsEngine {
     if (this.smoothFilter) {
       this.smoothFilter.frequency.value = this.effects.smooth.params.cutoff;
     }
+  }
+
+  updatePhaserParams() {
+    if (!this.phaserLfo || !this.phaserStages) return;
+    const p = this.effects.phaser.params;
+    this.phaserLfo.frequency.value = p.rate;
+    this.phaserLfoGain.gain.value = p.depth * 600; // ±600Hz sweep
+    this.phaserFb.gain.value = p.feedback;
+    this.phaserDry.gain.value = 1;
+    this.phaserWet.gain.value = 0.7;
   }
 
   updateWobbleParams() {

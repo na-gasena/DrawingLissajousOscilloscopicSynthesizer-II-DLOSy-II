@@ -550,18 +550,12 @@ class StepSequencer {
       const shiftedFreq = step.freq * Math.pow(2, this.masterFreqShift / 12);
 
       if (step.waveType === 'drawing' && window.drawingMode) {
-        // AutoCycle OFF 時のみ per-step のスロット割り当てを適用（AutoCycle との競合を防ぐ）
-        if (!drawingMode.autoSlotCycle && step.drawingSlot !== drawingMode.activeSlot) {
-          drawingMode.activeSlot = step.drawingSlot;
-          drawingMode.redrawCanvas();
-          drawingMode.updateWaveformPreview();
-          // Update slot tab UI
-          document.querySelectorAll('.draw-slot-tab').forEach((t, idx) => {
-            t.classList.toggle('active', idx === step.drawingSlot);
-          });
-        }
+        // activeSlot を変更せず音声用スロットを決定
+        const audioSlotIdx = drawingMode.autoSlotCycle
+          ? drawingMode.activeSlot   // AutoCycle ON: AutoCycle が管理するスロット
+          : step.drawingSlot;        // AutoCycle OFF: ステップに保存されたスロット（UIを変えない）
         // Drawing wave: play with stereo AudioBuffer (L=waveX, R=waveY)
-        const slot = drawingMode.slots[drawingMode.activeSlot];
+        const slot = drawingMode.slots[audioSlotIdx];
         if (slot && slot.waveX.length > 0) {
           audioEngine.playFreqWithDrawing(shiftedFreq, slot.waveX, slot.waveY);
         } else {
