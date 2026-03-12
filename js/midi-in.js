@@ -108,6 +108,7 @@ class MidiIn {
       case 0x90: // Note On
         if (data2 > 0) {
           this._dispatchNoteOn(data1, data2, this.mode);
+          this._triggerIndicator('midi-in-indicator1');
         } else {
           this._dispatchNoteOff(data1, this.mode);
         }
@@ -130,6 +131,7 @@ class MidiIn {
       case 0x90: // Note On
         if (data2 > 0) {
           this._dispatchNoteOn(data1, data2, this.mode2);
+          this._triggerIndicator('midi-in-indicator2');
         } else {
           this._dispatchNoteOff(data1, this.mode2);
         }
@@ -143,11 +145,16 @@ class MidiIn {
     }
   }
 
+  _triggerIndicator(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.add('active');
+    setTimeout(() => el.classList.remove('active'), 100);
+  }
+
   _dispatchNoteOn(note, velocity, mode) {
     if (mode === 'synth') {
       this.playSynthNote(note, velocity);
-    } else if (mode === 'drums') {
-      this.triggerDrum(note);
     } else if (mode === 'arp') {
       if (window.arpeggiator && arpeggiator.enabled) arpeggiator.addNote(note);
     }
@@ -366,8 +373,8 @@ class MidiIn {
         <div class="midi-in-row">
           <span class="midi-label">MOD1</span>
           <button id="midi-in-mode-synth" class="small-btn active">SYNTH</button>
-          <button id="midi-in-mode-drums" class="small-btn">DRUMS</button>
           <button id="midi-in-mode-arp" class="small-btn">ARP</button>
+          <div id="midi-in-indicator1" class="midi-indicator"></div>
         </div>
 
         <div class="midi-in-row midi-in-device-row">
@@ -379,8 +386,8 @@ class MidiIn {
         <div class="midi-in-row">
           <span class="midi-label">MOD2</span>
           <button id="midi-in-mode2-synth" class="small-btn active">SYNTH</button>
-          <button id="midi-in-mode2-drums" class="small-btn">DRUMS</button>
           <button id="midi-in-mode2-arp" class="small-btn">ARP</button>
+          <div id="midi-in-indicator2" class="midi-indicator"></div>
         </div>
 
         <div class="midi-in-row">
@@ -457,12 +464,10 @@ class MidiIn {
 
     // Mode buttons IN1
     document.getElementById('midi-in-mode-synth')?.addEventListener('click', () => this.setMode('synth'));
-    document.getElementById('midi-in-mode-drums')?.addEventListener('click', () => this.setMode('drums'));
     document.getElementById('midi-in-mode-arp')?.addEventListener('click',   () => this.setMode('arp'));
 
     // Mode buttons IN2
     document.getElementById('midi-in-mode2-synth')?.addEventListener('click', () => this.setMode2('synth'));
-    document.getElementById('midi-in-mode2-drums')?.addEventListener('click', () => this.setMode2('drums'));
     document.getElementById('midi-in-mode2-arp')?.addEventListener('click',   () => this.setMode2('arp'));
 
     // CC Learn
@@ -498,14 +503,12 @@ class MidiIn {
   setMode(mode) {
     this.mode = mode;
     document.getElementById('midi-in-mode-synth')?.classList.toggle('active', mode === 'synth');
-    document.getElementById('midi-in-mode-drums')?.classList.toggle('active', mode === 'drums');
     document.getElementById('midi-in-mode-arp')?.classList.toggle('active',   mode === 'arp');
   }
 
   setMode2(mode) {
     this.mode2 = mode;
     document.getElementById('midi-in-mode2-synth')?.classList.toggle('active', mode === 'synth');
-    document.getElementById('midi-in-mode2-drums')?.classList.toggle('active', mode === 'drums');
     document.getElementById('midi-in-mode2-arp')?.classList.toggle('active',   mode === 'arp');
   }
 

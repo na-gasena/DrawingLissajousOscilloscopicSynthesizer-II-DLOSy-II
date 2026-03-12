@@ -6,7 +6,7 @@
 
 class Arpeggiator {
   constructor() {
-    this.enabled = false;
+    this.enabled = true;
 
     // Frequency control
     this.baseFreq = 440;
@@ -139,17 +139,18 @@ class Arpeggiator {
       const slot = drawingMode.slots[drawingMode.activeSlot];
       if (slot && slot.waveX.length > 0) {
         const len = slot.waveX.length;
-        const buffer = ctx.createBuffer(2, len, ctx.sampleRate);
-        const lData = buffer.getChannelData(0);
-        const rData = buffer.getChannelData(1);
+        const bufferL = ctx.createBuffer(1, len, ctx.sampleRate);
+        const bufferR = ctx.createBuffer(1, len, ctx.sampleRate);
+        const lData = bufferL.getChannelData(0);
+        const rData = bufferR.getChannelData(0);
         for (let i = 0; i < len; i++) {
           lData[i] = slot.waveX[i] || 0;
           rData[i] = (slot.waveY[i] !== undefined) ? slot.waveY[i] : (slot.waveX[i] || 0);
         }
         this.oscL = ctx.createBufferSource();
         this.oscR = ctx.createBufferSource();
-        this.oscL.buffer = buffer;
-        this.oscR.buffer = buffer;
+        this.oscL.buffer = bufferL;
+        this.oscR.buffer = bufferR;
         this.oscL.loop = true;
         this.oscR.loop = true;
         const baseF = ctx.sampleRate / len;

@@ -98,15 +98,11 @@ document.addEventListener('DOMContentLoaded', () => {
       switchLeftTab('settings');
     }
 
-    // ARP enabled: auto-activate when ARP tab is active
-    if (window.arpeggiator) {
-      arpeggiator.enabled = (target === 'arp');
-      // Redraw ARP ADSR canvas after tab becomes visible (resize sync)
-      if (target === 'arp') {
-        requestAnimationFrame(() => {
-          if (arpeggiator.drawAdsrCurve) arpeggiator.drawAdsrCurve();
-        });
-      }
+    // Redraw ARP ADSR canvas after tab becomes visible (resize sync)
+    if (window.arpeggiator && target === 'arp') {
+      requestAnimationFrame(() => {
+        if (arpeggiator.drawAdsrCurve) arpeggiator.drawAdsrCurve();
+      });
     }
   }
 
