@@ -331,8 +331,10 @@ class Arpeggiator {
     const bpm = audioEngine.params.tempo || 120;
     const stepDur = 60 / bpm / (this.div / 4); // seconds per arp step
 
+    const SCHEDULE_AHEAD = document.hidden ? 2.0 : 0.05;
     const now = audioEngine.ctx.currentTime;
-    while (this._nextStepTime < now + 0.05) {
+    if (this._nextStepTime < now - 0.5) this._nextStepTime = now;
+    while (this._nextStepTime < now + SCHEDULE_AHEAD) {
       const note = this.getNextNote();
       if (note !== null) {
         this.noteOn(note);

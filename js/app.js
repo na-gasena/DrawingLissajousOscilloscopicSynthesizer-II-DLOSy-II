@@ -185,5 +185,12 @@ document.addEventListener('DOMContentLoaded', () => {
   document.addEventListener('click', initAudio, { once: true });
   document.addEventListener('touchstart', initAudio, { once: true });
 
+  // Resume AudioContext when tab becomes visible again (browser may suspend it in background)
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && window.audioEngine) {
+      audioEngine.resume();
+    }
+  });
+
   console.log('DLOSy20 ready - click or tap to enable audio');
 });

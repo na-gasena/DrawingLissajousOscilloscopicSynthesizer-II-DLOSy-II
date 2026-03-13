@@ -482,14 +482,17 @@ class EffectsEngine {
       card.className = 'fx-card' + (state.enabled ? ' active' : '');
       card.id = `fx-card-${def.id}`;
 
-      // Drag-to-reorder
-      card.setAttribute('draggable', 'true');
+      // Drag-to-reorder (draggable enabled only when mousedown on handle)
+      card.draggable = false;
       card.addEventListener('dragstart', (e) => {
         this._draggedId = def.id;
         e.dataTransfer.effectAllowed = 'move';
         card.classList.add('dragging');
       });
-      card.addEventListener('dragend', () => card.classList.remove('dragging'));
+      card.addEventListener('dragend', () => {
+        card.draggable = false;
+        card.classList.remove('dragging');
+      });
       card.addEventListener('dragover', (e) => {
         e.preventDefault();
         card.classList.add('drag-over');
@@ -519,6 +522,7 @@ class EffectsEngine {
       dragHandle.className = 'fx-drag-handle';
       dragHandle.textContent = '⠿';
       dragHandle.title = 'Drag to reorder';
+      dragHandle.addEventListener('mousedown', () => { card.draggable = true; });
 
       const toggle = document.createElement('button');
       toggle.className = 'fx-toggle' + (state.enabled ? ' on' : '');

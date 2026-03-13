@@ -496,7 +496,6 @@ class StepSequencer {
   _startLookahead() {
     this._stopLookahead();
     const LOOKAHEAD_MS = 25;   // how often to check (ms)
-    const SCHEDULE_AHEAD = 0.05; // how far ahead to schedule (seconds)
 
     this._lookaheadId = setInterval(() => {
       if (!this.isPlaying) return;
@@ -504,7 +503,12 @@ class StepSequencer {
       // MIDI CLK sync: do not self-schedule
       if (window.cvClock && cvClock.enabled) return;
 
+      // Extend lookahead when in background (Chrome throttles setInterval to ~1000ms)
+      const SCHEDULE_AHEAD = document.hidden ? 2.0 : 0.05;
+
       const now = audioEngine.ctx.currentTime;
+      // Prevent burst catch-up if tab was hidden long enough for nextStepTime to lag far behind
+      if (this._nextStepTime < now - 0.5) this._nextStepTime = now;
       while (this._nextStepTime < now + SCHEDULE_AHEAD) {
         this._fireStep(this._nextStepTime);
         this._advanceStep();
