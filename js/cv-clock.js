@@ -19,6 +19,9 @@ class MidiClockSync {
     this.clockTimes = [];
     this.maxClockSamples = 24; // 1 beat worth of clocks for averaging
     this.detectedBPM = 0;
+    
+    // Rate Multiplier (x0.5, x1, x2)
+    this.rateMultiplier = 1;
   }
 
   async init() {
@@ -136,7 +139,8 @@ class MidiClockSync {
       }
       const avgClockMs = total / (this.clockTimes.length - 1);
       // 1 beat = 24 clocks → BPM = 60000 / (avgClockMs * 24)
-      this.detectedBPM = Math.round(60000 / (avgClockMs * 24));
+      const baseBPM = 60000 / (avgClockMs * 24);
+      this.detectedBPM = Math.round(baseBPM * this.rateMultiplier);
       this.updateBPMDisplay();
     }
 
@@ -186,6 +190,12 @@ class MidiClockSync {
           </select>
         </div>
         <div class="cv-clock-row">
+          <span class="cv-label">RATE</span>
+          <button id="midi-clk-rate-half" class="small-btn rate-btn" data-mult="0.5">x1/2</button>
+          <button id="midi-clk-rate-1" class="small-btn rate-btn active" data-mult="1">x1</button>
+          <button id="midi-clk-rate-2" class="small-btn rate-btn" data-mult="2">x2</button>
+        </div>
+        <div class="cv-clock-row">
           <span class="cv-label">BPM</span>
           <span id="midi-clk-bpm" class="cv-val cv-bpm">---</span>
           <span id="midi-clk-status" class="cv-status">Off</span>
@@ -202,6 +212,36 @@ class MidiClockSync {
     document.getElementById('midi-clk-input-select')?.addEventListener('change', (e) => {
       this.attachInput(e.target.value);
     });
+
+    // Rate Multiplier buttons
+    container.querySelectorAll('.rate-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const mult = parseFloat(e.target.dataset.mult);
+        this.setRateMultiplier(mult);
+      });
+    });
+  }
+
+  setRateMultiplier(mult) {
+    this.rateMultiplier = mult;
+    this.clocksPerStep = Math.round(6 / mult);
+    
+    // Update active class on buttons
+    document.querySelectorAll('.rate-btn').forEach(btn => {
+      btn.classList.toggle('active', parseFloat(btn.dataset.mult) === mult);
+    });
+    
+    // Recalculate BPM with new multiplier if we have clock data
+    if (this.clockTimes.length >= 2) {
+      let total = 0;
+      for (let i = 1; i < this.clockTimes.length; i++) {
+        total += this.clockTimes[i] - this.clockTimes[i - 1];
+      }
+      const avgClockMs = total / (this.clockTimes.length - 1);
+      const baseBPM = 60000 / (avgClockMs * 24);
+      this.detectedBPM = Math.round(baseBPM * this.rateMultiplier);
+      this.updateBPMDisplay();
+    }
   }
 
   populateInputs() {

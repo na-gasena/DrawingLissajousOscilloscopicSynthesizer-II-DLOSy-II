@@ -67,10 +67,10 @@ class MidiIn {
       { target: 'vcoModeStep',  label: 'VCO STEP',   min: 0, max: 1 },
       { target: 'vcoModeCont',  label: 'VCO CONT',   min: 0, max: 1 },
       { target: 'vcoMasterVol', label: 'VCO MasterVol', min: 0, max: 1 },
-      { target: 'arpFreq',      label: 'ARP FREQ',   min: 0.1, max: 20 },
-      { target: 'arpRatio',     label: 'ARP RATIO',  min: 0, max: 100 },
-      { target: 'arpGlitch',    label: 'ARP GLITCH', min: 0, max: 16 },
-      { target: 'arpVol',       label: 'ARP VOL',    min: 0, max: 1 },
+      { target: 'arpFreq',      label: 'ARP FREQ',   min: 0, max: 1000 },
+      { target: 'arpRatio',     label: 'ARP RATIO',  min: 10, max: 400 },
+      { target: 'arpGlitch',    label: 'ARP GLITCH', min: 4, max: 64 },
+      { target: 'arpVol',       label: 'ARP VOL',    min: 0, max: 100 },
     ];
 
     // Active notes (for Note Off tracking)
@@ -372,15 +372,14 @@ class MidiIn {
     } else if (param === 'masterFreqShift' && window.stepSequencer) {
       stepSequencer.masterFreqShift = val;
     } else if (param.startsWith('arp') && window.arpeggiator) {
-      if (param === 'arpFreq') arpeggiator.setBaseFreq(val);
-      else if (param === 'arpRatio') arpeggiator.ratio = val;
-      else if (param === 'arpGlitch') arpeggiator.glitchSteps = val;
-      else if (param === 'arpVol') arpeggiator.volume = val;
-      
-      const el = document.getElementById(param === 'arpVol' ? 'arp-volume' : param === 'arpFreq' ? 'arp-freq' : param === 'arpRatio' ? 'arp-ratio' : 'arp-glitch');
+      const elId = param === 'arpVol' ? 'arp-vol-slider' :
+                   param === 'arpFreq' ? 'arp-freq-slider' :
+                   param === 'arpRatio' ? 'arp-ratio-slider' :
+                   param === 'arpGlitch' ? 'arp-glitch-slider' : '';
+      const el = document.getElementById(elId);
       if (el) {
         el.value = val;
-        el.dispatchEvent(new Event('input'));
+        el.dispatchEvent(new Event('input', { bubbles: true }));
       }
       return;
     } else if (audioEngine.params[param] !== undefined) {

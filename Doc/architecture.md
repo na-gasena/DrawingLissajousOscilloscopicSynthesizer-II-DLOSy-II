@@ -38,10 +38,12 @@ DLOSy20/
 │   ├── adsr-editor.js         ← ADSR曲線ビジュアルエディタ (未接続)
 │   ├── midi-out.js            ← MIDI OUT (Web MIDI API / Korg Volca Drum連携)
 │   ├── vco-loop.js            ← VCO Loop 曲線エディタ (STEP/CONT, ADSR対応)
-│   ├── drawing-mode.js        ← Drawing Mode 描画→波形変換（8/16スロット）
+│   ├── drawing-mode.js        ← Drawing Mode 描画→波形変換（8/16スロット+8バンク）
 │   ├── unim-search.js         ← Unim Unicode検索 → Drawing Mode連携
 │   ├── effects-engine.js      ← 音声/波形エフェクトエンジン (Web Audio API)
-│   ├── preset-manager.js      ← 状態・パターンの保存/復元 (localStorage/JSON)
+│   ├── preset-manager.js      ← 状態・パターンの保存/復元 (Audio Params含む)
+│   ├── midi-in.js             ← MIDI IN (CC Learn, ノート入力)
+│   ├── cv-clock.js            ← MIDI Clock (0xF8) 同期 / BPM乗数(x0.5/x1/x2)
 └── Doc/
     └── architecture.md        ← 本ドキュメント
 ```
@@ -77,7 +79,9 @@ graph TD
     end
 
     subgraph "External Integration"
-        MIDI["midi-out.js<br/>(Web MIDI API)"]
+        MIDI_OUT["midi-out.js<br/>(MIDI 送信)"]
+        MIDI_IN["midi-in.js<br/>(MIDI 受信 / CC Learn)"]
+        CV["cv-clock.js<br/>(MIDI Clock Sync)"]
         UNIM["unim-search.js<br/>(Unim API → Drawing Mode)"]
     end
 
@@ -275,10 +279,10 @@ python -m http.server 3000
 
 - **全体保存 (Preset Manager)**
   - 左パネル SETTINGS タブ内に SAVE / LOAD ボタン（JSONエクスポート/インポート）
-  - `localStorage` による自動保存（2秒遅延のデバウンス処理）
+  - シンセパラメータ（Cutoff, ADSR等）やパターンの状態など、現在のアプリケーション状態を全てシリアライズ
 - **パターンバンク (Pattern Bank)**
-  - `SEQUENCER`, `DRUMS`, `VCO LOOP` の各モジュールに **8つのパターンスロット** (`[1]`〜`[8]`) を保有
-  - バンク切り替え時に現在のパターンを自動保存し、対象スロットのパターンを即座に復元。演奏中でもシームレスに切り替え可能。
+  - `SEQUENCER`, `DRUMS`, `VCO LOOP`, `DRAWING MODE` の各モジュールに **8つのパターンスロット/バンク** (`[1]`〜`[8]`) を保有
+  - バンク切り替え時（またはキーボードの1〜8押下時）に現在のパターンを自動保存し、対象スロットのパターンを即座に復元。演奏中でもシームレスに切り替え可能。
 
 ---
 
@@ -289,15 +293,17 @@ python -m http.server 3000
 | `audio-engine.js`   | AudioContext管理、シンセ/ドラム音源作成                | `audioEngine`    |
 | `audio-settings.js` | デバイス選択、レイテンシ設定、リミッター               | `audioSettings`  |
 | `effects-engine.js` | 10種のエフェクト処理とAudioNode管理                    | `effectsEngine`  |
-| `step-sequencer.js` | 16/32ステップの記録・同期再生                          | `stepSequencer`  |
+| `step-sequencer.js` | 16/32ステップ記録再生、Octave Random、Master Freq      | `stepSequencer`  |
 | `drum-machine.js`   | 6トラックのドラムパターン・一括制御                    | `drumMachine`    |
-| `arpeggiator.js`    | L/R独立、常時オシレータ方式 (Draw波形・ADSRカーブ対応) | `arpeggiator`    |
+| `arpeggiator.js`    | L/R独立、常時オシレータ方式 (MIDI CC Learn対応)        | `arpeggiator`    |
 | `midi-out.js`       | Web MIDI API を介した外部出力管理                      | `midiOut`        |
-| `vco-loop.js`       | 8パラメータ曲線エディタ、STEP時ADSR発火                | `vcoLoop`        |
-| `drawing-mode.js`   | 波形描画キャンバス（8/16スロット切替）                 | `drawingMode`    |
+| `midi-in.js`        | Web MIDI API 入力、Note On/Off、CC Learn処理           | `midiIn`         |
+| `cv-clock.js`       | MIDIクロック連携、BPM乗数制御 (x0.5, x1, x2)           | `cvClock`        |
+| `vco-loop.js`       | 8パラメータ曲線エディタ、キーボード(1-8)でのバンク切替 | `vcoLoop`        |
+| `drawing-mode.js`   | 波形描画キャンバス（8/16スロット、8パターンバンク）    | `drawingMode`    |
 | `unim-search.js`    | Unim Unicode検索・グリフ適用                           | `unimSearch`     |
-| `preset-manager.js` | プリセット保存/読込・パターンバンク管理                | `presetManager`  |
-| `app.js`            | 全モジュールの初期化                                   | —                |
+| `preset-manager.js` | プリセット保存/読込・パターンバンク・UI同期            | `presetManager`  |
+| `app.js`            | 全モジュールの初期化、グローバルキーボードショートカット| —                |
 
 ---
 
