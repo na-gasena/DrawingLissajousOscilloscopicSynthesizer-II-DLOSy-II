@@ -1601,17 +1601,76 @@ body {
   border: 1px solid var(--border-panel);
   border-radius: 4px;
   padding: 6px 8px;
-  transition: border-color 0.2s;
+  transition: border-color 0.2s, opacity 0.15s;
 }
 
 .fx-card.active {
   border-color: var(--accent-cyan);
 }
 
+.fx-card.dragging {
+  opacity: 0.35;
+}
+
+.fx-card.drag-over {
+  border-color: var(--accent-cyan);
+  box-shadow: 0 0 0 1px var(--accent-cyan);
+}
+
+.fx-drag-handle {
+  cursor: grab;
+  color: var(--text-label);
+  font-size: 14px;
+  opacity: 0.45;
+  flex-shrink: 0;
+  user-select: none;
+  line-height: 1;
+}
+
+.fx-drag-handle:active {
+  cursor: grabbing;
+}
+
+.fx-dw-knob {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #3a3a45, #1a1a1e);
+  border: 1.5px solid var(--border-panel);
+  cursor: pointer;
+  position: relative;
+  flex-shrink: 0;
+  touch-action: none;
+  user-select: none;
+}
+
+.fx-dw-knob::after {
+  content: '';
+  position: absolute;
+  width: 2px;
+  height: 8px;
+  background: var(--accent-cyan);
+  border-radius: 1px;
+  left: calc(50% - 1px);
+  top: 3px;
+  transform-origin: 50% 100%;
+  transform: rotate(var(--rotation, -135deg));
+}
+
+.fx-dw-value {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-value);
+  min-width: 28px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
 .fx-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 4px;
 }
 
 .fx-name {
@@ -1619,6 +1678,8 @@ body {
   font-size: 10px;
   color: var(--text-primary);
   letter-spacing: 0.5px;
+  flex: 1;
+  min-width: 0;
 }
 
 .fx-toggle {

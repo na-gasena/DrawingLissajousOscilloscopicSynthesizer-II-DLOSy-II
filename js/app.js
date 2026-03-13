@@ -110,35 +110,47 @@ document.addEventListener('DOMContentLoaded', () => {
     tab.addEventListener('click', () => onCenterTabSwitch(tab.dataset.tab));
   });
 
-  // ===== Track Active Panel (Center vs VCO Loop) =====
+  // ===== Track Active Panel (Center vs VCO Loop vs Drawing Mode) =====
   let isVcoActive = false;
+  let isDrawingActive = false;
   document.addEventListener('pointerdown', (e) => {
-    // If click is within vco-loop-panel, mark VCO as active
     if (e.target.closest('#vco-loop-panel')) {
       isVcoActive = true;
-    } 
-    // If click is within center panel, mark Center as active (VCO inactive)
-    else if (e.target.closest('#panel-center')) {
+      isDrawingActive = false;
+    } else if (e.target.closest('#drawing-panel')) {
+      isDrawingActive = true;
       isVcoActive = false;
+    } else if (e.target.closest('#panel-center')) {
+      isVcoActive = false;
+      isDrawingActive = false;
     }
   });
 
-  // Tab key to switch between SEQUENCER / DRUMS / ARP / GLYPH tabs OR VCO LOOP parameters
+  // Tab key: cycle Center tabs / VCO LOOP params / Drawing Mode slots
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Tab' && !e.target.closest('input, textarea, select')) {
       e.preventDefault();
 
-      if (isVcoActive && window.vcoLoop) {
+      if (isDrawingActive && window.drawingMode) {
+        // Cycle Drawing Mode slots
+        const nextSlot = (drawingMode.activeSlot + 1) % drawingMode.visibleSlotCount;
+        drawingMode.activeSlot = nextSlot;
+        document.querySelectorAll('.draw-slot-tab').forEach((t, idx) => {
+          t.classList.toggle('active', idx === nextSlot);
+        });
+        drawingMode.redrawCanvas();
+        drawingMode.updateWaveformPreview();
+      } else if (isVcoActive && window.vcoLoop) {
         // Cycle VCO LOOP parameter tabs
         const params = ['frequency', 'cutoff', 'resonance', 'volume', 'adsr'];
         let activeIdx = params.indexOf(vcoLoop.activeParam);
-        
+
         // Find next valid tab
         let nextIdx = (activeIdx + 1) % params.length;
         if (vcoLoop.continuousMode && params[nextIdx] === 'adsr') {
            nextIdx = (nextIdx + 1) % params.length; // skip ADSR if in CONT mode
         }
-        
+
         vcoLoop.switchParam(params[nextIdx]);
       } else {
         // Cycle Center tabs

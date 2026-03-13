@@ -86,12 +86,17 @@ class EffectsEngine {
     this.effectDefs.forEach(def => {
       this.effects[def.id] = {
         enabled: false,
+        dryWet: 1.0,
         params: {}
       };
       def.params.forEach(p => {
         this.effects[def.id].params[p.id] = p.value;
       });
     });
+
+    // Effect order (drag-reorderable)
+    this.effectOrder = this.effectDefs.map(d => d.id);
+    this._draggedId = null;
   }
 
   init() {
@@ -276,6 +281,20 @@ class EffectsEngine {
     this.phaserLfo.start();
     this.updatePhaserParams();
 
+    // 1-sample delay to break zero-delay feedback loop in phaser
+    this.phaserFbDelay = ctx.createDelay(0.1);
+    this.phaserFbDelay.delayTime.value = 1 / ctx.sampleRate;
+
+    // Per-effect dry/wet wrapper nodes
+    this.effectWrappers = {};
+    this.effectDefs.forEach(def => {
+      const dryGain = ctx.createGain();
+      const wetGain = ctx.createGain();
+      const mixer   = ctx.createGain();
+      mixer.gain.value = 1;
+      this.effectWrappers[def.id] = { dryGain, wetGain, mixer };
+    });
+
     this.audioNodesReady = true;
     this.rebuildChain();
   }
@@ -290,8 +309,9 @@ class EffectsEngine {
       this.distortNode,
       this.bitcrushNode,
       this.smoothFilter,
-      this.wobbleNode,
+      this.wobbleLfo,
       this.wobbleLfoGain,
+      this.wobbleNode,
       this.rotateNode,
       this.scaleNode,
       this.rippleNode,
@@ -303,11 +323,16 @@ class EffectsEngine {
       this.fxDelayFeedback,
       this.fxDelayWet,
       this.fxDelayDry,
-      this.phaserInput, this.phaserDry, this.phaserWet,
-      this.phaserFb, this.phaserOutput,
+      this.phaserLfo,
       this.phaserLfoGain,
+      this.phaserInput, this.phaserDry, this.phaserWet,
+      this.phaserFb, this.phaserFbDelay, this.phaserOutput,
       ...(this.phaserStages || []),
     ];
+    // Add dry/wet wrapper nodes
+    Object.values(this.effectWrappers || {}).forEach(w => {
+      allNodes.push(w.dryGain, w.wetGain, w.mixer);
+    });
     for (const node of allNodes) {
       if (node) try { node.disconnect(); } catch(e) {}
     }
@@ -337,61 +362,52 @@ class EffectsEngine {
       prev.connect(this.phaserWet);
       this.phaserWet.connect(this.phaserOutput);
       prev.connect(this.phaserFb);
-      this.phaserFb.connect(this.phaserStages[0]);
+      this.phaserFb.connect(this.phaserFbDelay);
+      this.phaserFbDelay.connect(this.phaserStages[0]);
     }
 
-    // Build chain: fxInput → [enabled effects in order] → fxOutput
+    // Build chain: fxInput → [enabled effects in effectOrder] → fxOutput
+    const nodeMap = {
+      distort:      { node: this.distortNode },
+      bitcrush:     { node: this.bitcrushNode },
+      smooth:       { node: this.smoothFilter },
+      wobble:       { node: this.wobbleNode },
+      rotate:       { node: this.rotateNode },
+      scale:        { node: this.scaleNode },
+      ripple:       { node: this.rippleNode },
+      stereo:       { node: this.stereoNode },
+      vectorcancel: { node: this.vectorCancelNode },
+      delay:        { input: this.fxDelayInput,  output: this.fxDelayOutput },
+      phaser:       { input: this.phaserInput,   output: this.phaserOutput  },
+    };
+
     let current = ae.fxInput;
-    const chain = [];
+    for (const id of this.effectOrder) {
+      const state = this.effects[id];
+      if (!state.enabled) continue;
 
-    if (this.effects.distort.enabled) {
-      this.updateDistortCurve();
-      chain.push(this.distortNode);
-    }
-    if (this.effects.bitcrush.enabled) {
-      chain.push(this.bitcrushNode);
-    }
-    if (this.effects.smooth.enabled) {
-      this.updateSmoothParams();
-      chain.push(this.smoothFilter);
-    }
-    if (this.effects.wobble.enabled) {
-      this.updateWobbleParams();
-      chain.push(this.wobbleNode);
-    }
-    if (this.effects.rotate.enabled) {
-      chain.push(this.rotateNode);
-    }
-    if (this.effects.scale.enabled) {
-      chain.push(this.scaleNode);
-    }
-    if (this.effects.ripple.enabled) {
-      chain.push(this.rippleNode);
-    }
-    if (this.effects.stereo.enabled) {
-      chain.push(this.stereoNode);
-    }
-    if (this.effects.vectorcancel.enabled) {
-      chain.push(this.vectorCancelNode);
-    }
-    if (this.effects.delay.enabled) {
-      this.updateDelayParams();
-      chain.push({ input: this.fxDelayInput, output: this.fxDelayOutput });
-    }
-    if (this.effects.phaser.enabled) {
-      this.updatePhaserParams();
-      chain.push({ input: this.phaserInput, output: this.phaserOutput });
-    }
+      if (id === 'distort')      this.updateDistortCurve();
+      else if (id === 'smooth')  this.updateSmoothParams();
+      else if (id === 'wobble')  this.updateWobbleParams();
+      else if (id === 'delay')   this.updateDelayParams();
+      else if (id === 'phaser')  this.updatePhaserParams();
 
-    // Connect the chain
-    for (const node of chain) {
-      if (node.input) {
-        current.connect(node.input);
-        current = node.output;
-      } else {
-        current.connect(node);
-        current = node;
-      }
+      const m = nodeMap[id];
+      const effectIn  = m.input  || m.node;
+      const effectOut = m.output || m.node;
+      const w = this.effectWrappers[id];
+      const dw = state.dryWet;
+
+      w.dryGain.gain.value = 1 - dw;
+      w.wetGain.gain.value = dw;
+      w.mixer.gain.value   = 1;
+
+      current.connect(w.dryGain);
+      w.dryGain.connect(w.mixer);
+      current.connect(effectIn);
+      effectOut.connect(w.wetGain);
+      w.wetGain.connect(w.mixer);
+      current = w.mixer;
     }
 
     current.connect(ae.fxOutput);
@@ -430,7 +446,7 @@ class EffectsEngine {
     if (!this.phaserLfo || !this.phaserStages) return;
     const p = this.effects.phaser.params;
     this.phaserLfo.frequency.value = p.rate;
-    this.phaserLfoGain.gain.value = p.depth * 600; // ±600Hz sweep
+    this.phaserLfoGain.gain.value = p.depth * 350; // ±350Hz sweep (stage[0] base=400Hz, min stays ≥50Hz)
     this.phaserFb.gain.value = p.feedback;
     this.phaserDry.gain.value = 1;
     this.phaserWet.gain.value = 0.7;
@@ -457,16 +473,52 @@ class EffectsEngine {
     `;
 
     const list = document.getElementById('effects-list');
-    this.effectDefs.forEach(def => {
+    this.effectOrder.forEach(id => {
+      const def   = this.effectDefs.find(d => d.id === id);
+      if (!def) return;
       const state = this.effects[def.id];
 
       const card = document.createElement('div');
       card.className = 'fx-card' + (state.enabled ? ' active' : '');
       card.id = `fx-card-${def.id}`;
 
+      // Drag-to-reorder
+      card.setAttribute('draggable', 'true');
+      card.addEventListener('dragstart', (e) => {
+        this._draggedId = def.id;
+        e.dataTransfer.effectAllowed = 'move';
+        card.classList.add('dragging');
+      });
+      card.addEventListener('dragend', () => card.classList.remove('dragging'));
+      card.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        card.classList.add('drag-over');
+      });
+      card.addEventListener('dragleave', () => card.classList.remove('drag-over'));
+      card.addEventListener('drop', (e) => {
+        e.preventDefault();
+        card.classList.remove('drag-over');
+        if (!this._draggedId || this._draggedId === def.id) return;
+        const fromIdx = this.effectOrder.indexOf(this._draggedId);
+        const toIdx   = this.effectOrder.indexOf(def.id);
+        if (fromIdx < 0 || toIdx < 0) return;
+        this.effectOrder.splice(fromIdx, 1);
+        this.effectOrder.splice(toIdx, 0, this._draggedId);
+        this._draggedId = null;
+        this.buildUI();
+        if (this.audioNodesReady) this.rebuildChain();
+        this.triggerAutoSave();
+      });
+
       // Header with toggle
       const header = document.createElement('div');
       header.className = 'fx-header';
+
+      // Drag handle
+      const dragHandle = document.createElement('span');
+      dragHandle.className = 'fx-drag-handle';
+      dragHandle.textContent = '⠿';
+      dragHandle.title = 'Drag to reorder';
 
       const toggle = document.createElement('button');
       toggle.className = 'fx-toggle' + (state.enabled ? ' on' : '');
@@ -477,7 +529,7 @@ class EffectsEngine {
         toggle.textContent = state.enabled ? 'ON' : 'OFF';
         card.classList.toggle('active', state.enabled);
         paramsDiv.style.display = state.enabled ? 'block' : 'none';
-        
+
         if (window.audioEngine && audioEngine.isInitialized) {
           audioEngine.resume();
         }
@@ -491,7 +543,47 @@ class EffectsEngine {
       nameSpan.textContent = def.name;
       nameSpan.title = def.desc;
 
+      // Dry/Wet knob
+      const dwKnob = document.createElement('div');
+      dwKnob.className = 'fx-dw-knob';
+      dwKnob.style.setProperty('--rotation', `${-135 + state.dryWet * 270}deg`);
+      dwKnob.title = 'Dry/Wet (drag up/down · dblclick=100%)';
+
+      const dwValue = document.createElement('span');
+      dwValue.className = 'fx-dw-value';
+      dwValue.textContent = `${Math.round(state.dryWet * 100)}%`;
+
+      let _dwY = null;
+      dwKnob.addEventListener('pointerdown', (e) => {
+        _dwY = e.clientY;
+        dwKnob.setPointerCapture(e.pointerId);
+        e.stopPropagation();
+      });
+      dwKnob.addEventListener('pointermove', (e) => {
+        if (_dwY === null) return;
+        state.dryWet = Math.max(0, Math.min(1, state.dryWet + (_dwY - e.clientY) * 0.01));
+        _dwY = e.clientY;
+        dwKnob.style.setProperty('--rotation', `${-135 + state.dryWet * 270}deg`);
+        dwValue.textContent = `${Math.round(state.dryWet * 100)}%`;
+        const w = this.effectWrappers?.[def.id];
+        if (w) { w.wetGain.gain.value = state.dryWet; w.dryGain.gain.value = 1 - state.dryWet; }
+        this.triggerAutoSave();
+      });
+      dwKnob.addEventListener('pointerup', () => { _dwY = null; });
+      dwKnob.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        state.dryWet = 1.0;
+        dwKnob.style.setProperty('--rotation', '135deg');
+        dwValue.textContent = '100%';
+        const w = this.effectWrappers?.[def.id];
+        if (w) { w.wetGain.gain.value = 1; w.dryGain.gain.value = 0; }
+        this.triggerAutoSave();
+      });
+
+      header.appendChild(dragHandle);
       header.appendChild(nameSpan);
+      header.appendChild(dwKnob);
+      header.appendChild(dwValue);
       header.appendChild(toggle);
       card.appendChild(header);
 
@@ -559,10 +651,11 @@ class EffectsEngine {
   // ===== STATE COLLECT / APPLY (for PresetManager) =====
 
   collectState() {
-    const state = {};
+    const state = { __order: [...this.effectOrder] };
     Object.entries(this.effects).forEach(([id, fx]) => {
       state[id] = {
         enabled: fx.enabled,
+        dryWet: fx.dryWet,
         params: { ...fx.params }
       };
     });
@@ -571,9 +664,18 @@ class EffectsEngine {
 
   applyState(saved) {
     if (!saved) return;
+    if (Array.isArray(saved.__order)) {
+      const known = this.effectDefs.map(d => d.id);
+      this.effectOrder = [
+        ...saved.__order.filter(id => known.includes(id)),
+        ...known.filter(id => !saved.__order.includes(id)),
+      ];
+    }
     Object.entries(saved).forEach(([id, data]) => {
+      if (id === '__order') return;
       if (this.effects[id]) {
         this.effects[id].enabled = data.enabled;
+        if (data.dryWet !== undefined) this.effects[id].dryWet = data.dryWet;
         Object.assign(this.effects[id].params, data.params);
       }
     });
