@@ -7,7 +7,7 @@
 class DrumMachine {
   constructor() {
     this.numSteps = 16;
-    this.enabled = true; // Master ON/OFF for all drums
+    this.enabled = false; // Master ON/OFF for all drums
 
     // Data-driven track definitions (array for easy extension)
     this.trackDefs = [

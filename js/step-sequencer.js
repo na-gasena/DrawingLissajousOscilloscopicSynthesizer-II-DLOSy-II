@@ -39,6 +39,7 @@ class StepSequencer {
     this.editStep = 0;
     this.isPlaying = false;
     this.timerId = null;
+    this.enabled = false; // SEQUENCER ON/OFF
 
     // Sequence data
     this.steps = [];
@@ -221,6 +222,23 @@ class StepSequencer {
       audioEngine.init().then(() => {
         this.togglePlay();
       });
+    });
+
+    // Toggle SEQUENCER ON/OFF
+    document.getElementById('btn-seq-toggle')?.addEventListener('click', () => {
+      this.enabled = !this.enabled;
+      const btn = document.getElementById('btn-seq-toggle');
+      if (btn) {
+        btn.textContent = this.enabled ? 'ON' : 'OFF';
+        btn.classList.toggle('seq-on', this.enabled);
+        if (this.enabled) {
+          btn.style.backgroundColor = '#e84545';
+          btn.style.color = '#fff';
+        } else {
+          btn.style.backgroundColor = '';
+          btn.style.color = '';
+        }
+      }
     });
 
     // Step count toggle: 16 / 32
@@ -544,6 +562,26 @@ class StepSequencer {
   }
 
   playCurrentStep(midiTimestamp) {
+    // Only play if sequencer is ON
+    if (!this.enabled) {
+      // Trigger drums even if sequencer notes are OFF (drums have their own master OFF but share sequencer clock)
+      if (window.drumMachine) {
+        drumMachine.playStep(this.currentStep, midiTimestamp);
+      }
+      
+      // Auto-cycle Drawing slots (Draw 1→2→…→8→1)
+      if (window.drawingMode) {
+        drawingMode.advanceSlot();
+      }
+
+      // Sync: update VCO Loop playhead and apply parameters
+      if (window.vcoLoop) {
+        vcoLoop.onStepTick(this.currentStep, this.numSteps);
+        vcoLoop.drawCurve();
+      }
+      return; 
+    }
+
     const step = this.steps[this.currentStep];
     if (step.on && step.freq > 0) {
       // Apply master frequency shift (semitones)

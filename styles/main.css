@@ -278,6 +278,8 @@ body {
 #panel-center {
   overflow-y: auto;
   overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 #panel-center::-webkit-scrollbar {
@@ -1392,8 +1394,19 @@ body {
 }
 
 /* ===== UNIM GLYPH SEARCH ===== */
+#center-tab-glyph.active {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
 #unim-search-panel {
   margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 
 .unim-search-bar {
@@ -1461,8 +1474,10 @@ body {
 .unim-results-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
+  align-content: start;
   gap: 4px;
-  max-height: 140px;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   scrollbar-width: thin;
 }

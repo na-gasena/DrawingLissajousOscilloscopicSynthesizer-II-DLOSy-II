@@ -6,7 +6,7 @@
 class VCOLoop {
   constructor() {
     // State
-    this.enabled = false;
+    this.enabled = true;
     this.waveType = 'sine';
     this.masterVolume = 0.3;
     this.fadeDuration = 0.2; // seconds
@@ -46,6 +46,42 @@ class VCOLoop {
     this.patternBank = [];
     for (let i = 0; i < 8; i++) {
       this.patternBank.push(null);
+    }
+  }
+
+  // ===== MIDI HELPERS =====
+  switchParam(paramName) {
+    if (!this.curves[paramName]) return;
+    if (this.continuousMode && this.curves[paramName].stepOnly) return;
+    
+    this.activeParam = paramName;
+    document.querySelectorAll('.vco-param-tab').forEach(t => {
+      t.classList.toggle('active', t.dataset.param === paramName);
+    });
+    this.drawCurve();
+  }
+
+  setContinuousMode(isCont) {
+    if (this.continuousMode === isCont) return;
+    this.continuousMode = isCont;
+    document.querySelectorAll('.vco-mode-btn').forEach(b => {
+      b.classList.toggle('active', (b.dataset.mode === 'cont') === isCont);
+    });
+    
+    if (this.continuousMode && this.curves[this.activeParam]?.stepOnly) {
+      this.switchParam('frequency');
+    } else {
+      this.buildParamTabs? this.buildParamTabs() : null;
+    }
+    
+    this.drawCurve();
+
+    if (this.isOscRunning) {
+      if (this.continuousMode) {
+        this.startContinuousLoop();
+      } else {
+        this.stopContinuousLoop();
+      }
     }
   }
 
@@ -475,7 +511,7 @@ class VCOLoop {
       <div class="panel-title">
         VCO LOOP
         <div class="vco-header-controls">
-          <button id="vco-toggle" class="small-btn vco-toggle-btn">OFF</button>
+          <button id="vco-toggle" class="small-btn vco-toggle-btn${this.enabled ? ' vco-on' : ''}">${this.enabled ? 'ON' : 'OFF'}</button>
           <div class="vco-mode-select">
             <button class="vco-mode-btn active" data-mode="step">STEP</button>
             <button class="vco-mode-btn" data-mode="cont">CONT</button>

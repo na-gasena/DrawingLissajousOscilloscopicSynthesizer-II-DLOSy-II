@@ -110,15 +110,44 @@ document.addEventListener('DOMContentLoaded', () => {
     tab.addEventListener('click', () => onCenterTabSwitch(tab.dataset.tab));
   });
 
-  // Tab key to switch between SEQUENCER / DRUMS / ARP tabs
+  // ===== Track Active Panel (Center vs VCO Loop) =====
+  let isVcoActive = false;
+  document.addEventListener('pointerdown', (e) => {
+    // If click is within vco-loop-panel, mark VCO as active
+    if (e.target.closest('#vco-loop-panel')) {
+      isVcoActive = true;
+    } 
+    // If click is within center panel, mark Center as active (VCO inactive)
+    else if (e.target.closest('#panel-center')) {
+      isVcoActive = false;
+    }
+  });
+
+  // Tab key to switch between SEQUENCER / DRUMS / ARP / GLYPH tabs OR VCO LOOP parameters
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Tab' && !e.target.closest('input, textarea, select')) {
       e.preventDefault();
-      const tabs = document.querySelectorAll('.center-tab');
-      let activeIdx = 0;
-      tabs.forEach((t, i) => { if (t.classList.contains('active')) activeIdx = i; });
-      const nextIdx = (activeIdx + 1) % tabs.length;
-      onCenterTabSwitch(tabs[nextIdx].dataset.tab);
+
+      if (isVcoActive && window.vcoLoop) {
+        // Cycle VCO LOOP parameter tabs
+        const params = ['frequency', 'cutoff', 'resonance', 'volume', 'adsr'];
+        let activeIdx = params.indexOf(vcoLoop.activeParam);
+        
+        // Find next valid tab
+        let nextIdx = (activeIdx + 1) % params.length;
+        if (vcoLoop.continuousMode && params[nextIdx] === 'adsr') {
+           nextIdx = (nextIdx + 1) % params.length; // skip ADSR if in CONT mode
+        }
+        
+        vcoLoop.switchParam(params[nextIdx]);
+      } else {
+        // Cycle Center tabs
+        const tabs = document.querySelectorAll('.center-tab');
+        let activeIdx = 0;
+        tabs.forEach((t, i) => { if (t.classList.contains('active')) activeIdx = i; });
+        const nextIdx = (activeIdx + 1) % tabs.length;
+        onCenterTabSwitch(tabs[nextIdx].dataset.tab);
+      }
     }
   });
 

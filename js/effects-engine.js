@@ -291,6 +291,7 @@ class EffectsEngine {
       this.bitcrushNode,
       this.smoothFilter,
       this.wobbleNode,
+      this.wobbleLfoGain,
       this.rotateNode,
       this.scaleNode,
       this.rippleNode,
@@ -304,6 +305,7 @@ class EffectsEngine {
       this.fxDelayDry,
       this.phaserInput, this.phaserDry, this.phaserWet,
       this.phaserFb, this.phaserOutput,
+      this.phaserLfoGain,
       ...(this.phaserStages || []),
     ];
     for (const node of allNodes) {
@@ -475,6 +477,10 @@ class EffectsEngine {
         toggle.textContent = state.enabled ? 'ON' : 'OFF';
         card.classList.toggle('active', state.enabled);
         paramsDiv.style.display = state.enabled ? 'block' : 'none';
+        
+        if (window.audioEngine && audioEngine.isInitialized) {
+          audioEngine.resume();
+        }
         this.initAudioNodes();
         this.rebuildChain();
         this.triggerAutoSave();
@@ -518,7 +524,13 @@ class EffectsEngine {
           const val = parseFloat(e.target.value);
           state.params[p.id] = val;
           valueDisplay.textContent = this.formatValue(val, p);
-          this.rebuildChain();
+          
+          if (def.id === 'distort') this.updateDistortCurve();
+          else if (def.id === 'delay') this.updateDelayParams();
+          else if (def.id === 'smooth') this.updateSmoothParams();
+          else if (def.id === 'phaser') this.updatePhaserParams();
+          else if (def.id === 'wobble') this.updateWobbleParams();
+          
           this.triggerAutoSave();
         });
 
@@ -567,6 +579,9 @@ class EffectsEngine {
     });
     // Rebuild UI to reflect state
     this.buildUI();
+    if (this.audioNodesReady) {
+      this.rebuildChain();
+    }
   }
 
   // ===== AUDIO PROCESSING =====

@@ -16,9 +16,9 @@ class MidiIn {
     this.ccMap = {
       1:  { target: 'cutoff',    min: 100,   max: 5000 },
       74: { target: 'resonance', min: 0,     max: 30   },
-      71: { target: 'attack',    min: 0.001, max: 0.5  },
-      72: { target: 'release',   min: 0.01,  max: 2.0  },
-      73: { target: 'decay',     min: 0.01,  max: 1.0  },
+      71: { target: 'envAttack', min: 0.001, max: 0.5  },
+      72: { target: 'envRelease',min: 0.01,  max: 2.0  },
+      73: { target: 'envDecay',  min: 0.01,  max: 1.0  },
       7:  { target: 'masterVol', min: 0,     max: 1    },
     };
     this.ccLearnActive = false;
@@ -45,20 +45,28 @@ class MidiIn {
 
     // Available CC Learn targets (for UI)
     this.ccLearnTargets = [
-      { target: 'cutoff',    label: 'Cutoff',    min: 100,   max: 5000 },
-      { target: 'resonance', label: 'Resonance', min: 0,     max: 30   },
-      { target: 'attack',    label: 'Attack',    min: 0.001, max: 0.5  },
-      { target: 'decay',     label: 'Decay',     min: 0.01,  max: 1.0  },
-      { target: 'release',   label: 'Release',   min: 0.01,  max: 2.0  },
-      { target: 'masterVol', label: 'Master Vol', min: 0,     max: 1    },
-      { target: 'vcoLoop0',  label: 'VCO L1',    min: 0,     max: 1    },
-      { target: 'vcoLoop1',  label: 'VCO L2',    min: 0,     max: 1    },
-      { target: 'vcoLoop2',  label: 'VCO L3',    min: 0,     max: 1    },
-      { target: 'vcoLoop3',  label: 'VCO L4',    min: 0,     max: 1    },
-      { target: 'vcoLoop4',  label: 'VCO L5',    min: 0,     max: 1    },
-      { target: 'vcoLoop5',  label: 'VCO L6',    min: 0,     max: 1    },
-      { target: 'vcoLoop6',  label: 'VCO L7',    min: 0,     max: 1    },
-      { target: 'vcoLoop7',  label: 'VCO L8',    min: 0,     max: 1    },
+      { target: 'cutoff',       label: 'Cutoff',     min: 100,   max: 5000 },
+      { target: 'resonance',    label: 'Resonance',  min: 0,     max: 30   },
+      { target: 'envAttack',    label: 'Attack',     min: 0.001, max: 0.5  },
+      { target: 'envDecay',     label: 'Decay',      min: 0.01,  max: 1.0  },
+      { target: 'envRelease',   label: 'Release',    min: 0.01,  max: 2.0  },
+      { target: 'masterVol',    label: 'Master Vol', min: 0,     max: 1    },
+      { target: 'vcoLoop0',     label: 'VCO L1',     min: 0,     max: 1    },
+      { target: 'vcoLoop1',     label: 'VCO L2',     min: 0,     max: 1    },
+      { target: 'vcoLoop2',     label: 'VCO L3',     min: 0,     max: 1    },
+      { target: 'vcoLoop3',     label: 'VCO L4',     min: 0,     max: 1    },
+      { target: 'vcoLoop4',     label: 'VCO L5',     min: 0,     max: 1    },
+      { target: 'vcoLoop5',     label: 'VCO L6',     min: 0,     max: 1    },
+      { target: 'vcoLoop6',     label: 'VCO L7',     min: 0,     max: 1    },
+      { target: 'vcoLoop7',     label: 'VCO L8',     min: 0,     max: 1    },
+      { target: 'vcoTabFreq',   label: 'VCO FREQ',   min: 0, max: 1 },
+      { target: 'vcoTabCutoff', label: 'VCO CUTOFF', min: 0, max: 1 },
+      { target: 'vcoTabRes',    label: 'VCO RES',    min: 0, max: 1 },
+      { target: 'vcoTabVol',    label: 'VCO VOL',    min: 0, max: 1 },
+      { target: 'vcoTabAdsr',   label: 'VCO ADSR (S)', min: 0, max: 1 },
+      { target: 'vcoModeStep',  label: 'VCO STEP',   min: 0, max: 1 },
+      { target: 'vcoModeCont',  label: 'VCO CONT',   min: 0, max: 1 },
+      { target: 'vcoMasterVol', label: 'VCO MasterVol', min: 0, max: 1 },
     ];
 
     // Active notes (for Note Off tracking)
@@ -285,6 +293,7 @@ class MidiIn {
       document.getElementById('midi-in-learn')?.classList.remove('active');
       const learnSelect = document.getElementById('midi-in-learn-target');
       if (learnSelect) learnSelect.value = '';
+      if (window.presetManager) presetManager.autoSave();
       return;
     }
 
@@ -303,6 +312,7 @@ class MidiIn {
       document.getElementById('midi-in-learn')?.classList.remove('active');
       const learnSelect = document.getElementById('midi-in-learn-target');
       if (learnSelect) learnSelect.value = '';
+      if (window.presetManager) presetManager.autoSave();
       return;
     }
 
@@ -321,6 +331,24 @@ class MidiIn {
     if (vcoMatch && window.vcoLoop) {
       const sliderIdx = parseInt(vcoMatch[1]);
       vcoLoop.setControlPointFromMidi(sliderIdx, normalized);
+      return;
+    }
+
+    if (param.startsWith('vco') && window.vcoLoop) {
+      if (value > 63) { // Trigger on high value
+        if (param === 'vcoTabFreq') vcoLoop.switchParam('frequency');
+        else if (param === 'vcoTabCutoff') vcoLoop.switchParam('cutoff');
+        else if (param === 'vcoTabRes') vcoLoop.switchParam('resonance');
+        else if (param === 'vcoTabVol') vcoLoop.switchParam('volume');
+        else if (param === 'vcoTabAdsr') vcoLoop.switchParam('adsr');
+        else if (param === 'vcoModeStep') vcoLoop.setContinuousMode(false);
+        else if (param === 'vcoModeCont') vcoLoop.setContinuousMode(true);
+      }
+      if (param === 'vcoMasterVol') {
+        vcoLoop.masterVolume = normalized;
+        const slider = document.getElementById('vco-vol-slider');
+        if (slider) slider.value = Math.round(normalized * 100);
+      }
       return;
     }
 
@@ -535,6 +563,30 @@ class MidiIn {
 
     buildOptions(select);
     buildOptions(select2);
+
+    // Restore device by saved name (from preset load)
+    if (this._pendingDeviceName) {
+      for (const [id, input] of this.midiAccess.inputs) {
+        if (input.name === this._pendingDeviceName) {
+          this.selectedInput = input;
+          input.onmidimessage = (ev) => this.handleMessage(ev);
+          if (select) select.value = id;
+          this._pendingDeviceName = null;
+          break;
+        }
+      }
+    }
+    if (this._pendingDeviceName2) {
+      for (const [id, input] of this.midiAccess.inputs) {
+        if (input.name === this._pendingDeviceName2) {
+          this.selectedInput2 = input;
+          input.onmidimessage = (ev) => this.handleMessage2(ev);
+          if (select2) select2.value = id;
+          this._pendingDeviceName2 = null;
+          break;
+        }
+      }
+    }
 
     // Auto-select first device for IN1 if not yet set
     if (this.midiAccess.inputs.size > 0 && !this.selectedInput) {
