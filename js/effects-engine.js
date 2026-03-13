@@ -79,6 +79,16 @@ class EffectsEngine {
         desc: '位相を高速反転（映像を残し音を消す）',
         params: [{ id: 'amount', name: 'Amount', min: 0, max: 1, value: 0.5, step: 0.01 }]
       },
+      {
+        id: 'flipx', name: 'Flip X', category: 'waveform',
+        desc: 'X軸（左チャンネル）を反転',
+        params: []
+      },
+      {
+        id: 'flipy', name: 'Flip Y', category: 'waveform',
+        desc: 'Y軸（右チャンネル）を反転',
+        params: []
+      },
     ];
 
     // Effect states
@@ -258,6 +268,32 @@ class EffectsEngine {
       }
     };
 
+    // --- Flip X (ScriptProcessor: invert left channel) ---
+    this.flipXNode = ctx.createScriptProcessor(BUFSIZE, 2, 2);
+    this.flipXNode.onaudioprocess = (e) => {
+      const inL = e.inputBuffer.getChannelData(0);
+      const inR = e.inputBuffer.getChannelData(1);
+      const outL = e.outputBuffer.getChannelData(0);
+      const outR = e.outputBuffer.getChannelData(1);
+      for (let i = 0; i < inL.length; i++) {
+        outL[i] = -inL[i];
+        outR[i] =  inR[i];
+      }
+    };
+
+    // --- Flip Y (ScriptProcessor: invert right channel) ---
+    this.flipYNode = ctx.createScriptProcessor(BUFSIZE, 2, 2);
+    this.flipYNode.onaudioprocess = (e) => {
+      const inL = e.inputBuffer.getChannelData(0);
+      const inR = e.inputBuffer.getChannelData(1);
+      const outL = e.outputBuffer.getChannelData(0);
+      const outR = e.outputBuffer.getChannelData(1);
+      for (let i = 0; i < inL.length; i++) {
+        outL[i] =  inL[i];
+        outR[i] = -inR[i];
+      }
+    };
+
     // --- Phaser (4-stage allpass + LFO) ---
     this.phaserInput  = ctx.createGain();
     this.phaserDry    = ctx.createGain();
@@ -317,6 +353,8 @@ class EffectsEngine {
       this.rippleNode,
       this.stereoNode,
       this.vectorCancelNode,
+      this.flipXNode,
+      this.flipYNode,
       this.fxDelayInput,
       this.fxDelayOutput,
       this.fxDelayNode,
@@ -377,6 +415,8 @@ class EffectsEngine {
       ripple:       { node: this.rippleNode },
       stereo:       { node: this.stereoNode },
       vectorcancel: { node: this.vectorCancelNode },
+      flipx:        { node: this.flipXNode },
+      flipy:        { node: this.flipYNode },
       delay:        { input: this.fxDelayInput,  output: this.fxDelayOutput },
       phaser:       { input: this.phaserInput,   output: this.phaserOutput  },
     };
