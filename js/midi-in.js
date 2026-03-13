@@ -67,6 +67,10 @@ class MidiIn {
       { target: 'vcoModeStep',  label: 'VCO STEP',   min: 0, max: 1 },
       { target: 'vcoModeCont',  label: 'VCO CONT',   min: 0, max: 1 },
       { target: 'vcoMasterVol', label: 'VCO MasterVol', min: 0, max: 1 },
+      { target: 'arpFreq',      label: 'ARP FREQ',   min: 0.1, max: 20 },
+      { target: 'arpRatio',     label: 'ARP RATIO',  min: 0, max: 100 },
+      { target: 'arpGlitch',    label: 'ARP GLITCH', min: 0, max: 16 },
+      { target: 'arpVol',       label: 'ARP VOL',    min: 0, max: 1 },
     ];
 
     // Active notes (for Note Off tracking)
@@ -367,6 +371,18 @@ class MidiIn {
       audioEngine.masterGain.gain.value = val;
     } else if (param === 'masterFreqShift' && window.stepSequencer) {
       stepSequencer.masterFreqShift = val;
+    } else if (param.startsWith('arp') && window.arpeggiator) {
+      if (param === 'arpFreq') arpeggiator.setBaseFreq(val);
+      else if (param === 'arpRatio') arpeggiator.ratio = val;
+      else if (param === 'arpGlitch') arpeggiator.glitchSteps = val;
+      else if (param === 'arpVol') arpeggiator.volume = val;
+      
+      const el = document.getElementById(param === 'arpVol' ? 'arp-volume' : param === 'arpFreq' ? 'arp-freq' : param === 'arpRatio' ? 'arp-ratio' : 'arp-glitch');
+      if (el) {
+        el.value = val;
+        el.dispatchEvent(new Event('input'));
+      }
+      return;
     } else if (audioEngine.params[param] !== undefined) {
       audioEngine.params[param] = val;
     }
@@ -375,7 +391,7 @@ class MidiIn {
     const knob = document.querySelector(`[data-param="${param}"]`);
     if (knob) {
       knob.value = val;
-      knob.dispatchEvent(new Event('input'));
+      knob.dispatchEvent(new Event('input', { bubbles: true }));
     }
   }
 

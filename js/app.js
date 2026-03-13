@@ -127,19 +127,30 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // Tab key: cycle Center tabs / VCO LOOP params / Drawing Mode slots
+  // 1-8 keys: switch pattern bank if VCO LOOP / Drawing Mode active
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Tab' && !e.target.closest('input, textarea, select')) {
+    if (e.target.closest('input, textarea, select')) return;
+
+    // Handle 1-8 keys for pattern/slot switching
+    if (e.key >= '1' && e.key <= '8') {
+      const idx = parseInt(e.key, 10) - 1;
+      if (isVcoActive && window.vcoLoop) {
+        e.preventDefault();
+        vcoLoop.switchPattern(idx);
+      } else if (isDrawingActive && window.drawingMode) {
+        e.preventDefault();
+        drawingMode.switchPattern(idx);
+      }
+      return;
+    }
+
+    if (e.key === 'Tab') {
       e.preventDefault();
 
       if (isDrawingActive && window.drawingMode) {
         // Cycle Drawing Mode slots
         const nextSlot = (drawingMode.activeSlot + 1) % drawingMode.visibleSlotCount;
-        drawingMode.activeSlot = nextSlot;
-        document.querySelectorAll('.draw-slot-tab').forEach((t, idx) => {
-          t.classList.toggle('active', idx === nextSlot);
-        });
-        drawingMode.redrawCanvas();
-        drawingMode.updateWaveformPreview();
+        drawingMode.switchSlot(nextSlot);
       } else if (isVcoActive && window.vcoLoop) {
         // Cycle VCO LOOP parameter tabs
         const params = ['frequency', 'cutoff', 'resonance', 'volume', 'adsr'];

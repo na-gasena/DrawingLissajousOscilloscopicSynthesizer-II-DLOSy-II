@@ -16,6 +16,13 @@ class DrawingMode {
     this.isDrawing = false;
     this.autoSlotCycle = false; // Auto-cycle through slots on each step
 
+    // Pattern bank (8 preset slots of 16 drawings each)
+    this.activePattern = 0;
+    this.patternBank = [];
+    for (let i = 0; i < 8; i++) {
+      this.patternBank.push(null);
+    }
+
     // Canvas
     this.canvas = null;
     this.ctx2d = null;
@@ -33,6 +40,7 @@ class DrawingMode {
   init() {
     this.buildUI();
     this.bindControls();
+    this.buildPatternBankUI();
   }
 
   // ===== UI =====
@@ -91,20 +99,102 @@ class DrawingMode {
       tab.textContent = slot.name;
       tab.dataset.slot = i;
       tab.addEventListener('click', () => {
-        this.activeSlot = i;
-        document.querySelectorAll('.draw-slot-tab').forEach(t => t.classList.remove('active'));
-        tab.classList.add('active');
-        this.redrawCanvas();
-        this.updateWaveformPreview();
+        this.switchSlot(i);
       });
       container.appendChild(tab);
     }
 
     // Clamp activeSlot if needed
     if (this.activeSlot >= this.visibleSlotCount) {
-      this.activeSlot = 0;
-      this.redrawCanvas();
-      this.updateWaveformPreview();
+      this.switchSlot(0);
+    }
+  }
+
+  switchSlot(index) {
+    if (index < 0 || index >= this.visibleSlotCount) return;
+    this.activeSlot = index;
+    
+    document.querySelectorAll('.draw-slot-tab').forEach((t, i) => {
+      t.classList.toggle('active', i === index);
+    });
+    
+    this.redrawCanvas();
+    this.updateWaveformPreview();
+    
+    // Switch VCO Loop audio buffer if running in drawing mode
+    if (window.vcoLoop && vcoLoop.isOscRunning && vcoLoop.isDrawingOsc) {
+      vcoLoop.switchDrawBuffer(this.activeSlot);
+    }
+  }
+
+  // ===== PATTERN BANK =====
+  switchPattern(index) {
+    if (index === this.activePattern) return;
+    
+    // Save current slots to the active bank
+    const savedSlots = this.slots.map(s => JSON.parse(JSON.stringify(s)));
+    this.patternBank[this.activePattern] = {
+      visibleSlotCount: this.visibleSlotCount,
+      slots: savedSlots
+    };
+
+    // Load target bank
+    this.activePattern = index;
+    const target = this.patternBank[index];
+    
+    if (target) {
+      this.visibleSlotCount = target.visibleSlotCount || 8;
+      this.slots = target.slots.map(slot => ({
+        name: slot.name,
+        points: slot.points.map(p => ({ x: p.x, y: p.y })),
+        waveX: [...slot.waveX],
+        waveY: [...slot.waveY],
+      }));
+    } else {
+      // Re-initialize to default blank slots
+      this.slots = [];
+      for (let i = 0; i < 16; i++) {
+        this.slots.push({ name: `Draw ${i + 1}`, points: [], waveX: [], waveY: [] });
+      }
+      this.visibleSlotCount = 8;
+    }
+
+    this.activeSlot = 0;
+    this.buildSlotTabs();
+    this.redrawCanvas();
+    this.updateWaveformPreview();
+    this.buildPatternBankUI();
+
+    // Update slot count buttons
+    document.getElementById('draw-slots-8')?.classList.toggle('active', this.visibleSlotCount === 8);
+    document.getElementById('draw-slots-16')?.classList.toggle('active', this.visibleSlotCount === 16);
+
+    // Auto-save preset if manager exists
+    if (window.presetManager) presetManager.autoSave();
+  }
+
+  buildPatternBankUI() {
+    const panel = document.getElementById('drawing-panel');
+    if (!panel) return;
+    let bankDiv = panel.querySelector('.pattern-bank');
+    if (!bankDiv) {
+      // Insert after the header element
+      const header = panel.querySelector('.panel-title');
+      bankDiv = document.createElement('div');
+      bankDiv.className = 'pattern-bank';
+      if (header) {
+        header.after(bankDiv);
+      } else {
+        panel.insertBefore(bankDiv, panel.firstChild);
+      }
+    }
+    bankDiv.innerHTML = '';
+    for (let i = 0; i < 8; i++) {
+      const btn = document.createElement('button');
+      btn.className = 'pattern-btn' + (i === this.activePattern ? ' active' : '');
+      btn.textContent = i + 1;
+      btn.addEventListener('click', () => this.switchPattern(i));
+      bankDiv.appendChild(btn);
     }
   }
 
@@ -168,18 +258,8 @@ class DrawingMode {
   // Advance to next slot (called from step sequencer on each step tick)
   advanceSlot() {
     if (!this.autoSlotCycle) return;
-    this.activeSlot = (this.activeSlot + 1) % this.visibleSlotCount;
-    // Update UI tabs
-    document.querySelectorAll('.draw-slot-tab').forEach((t, idx) => {
-      t.classList.toggle('active', idx === this.activeSlot);
-    });
-    this.redrawCanvas();
-    this.updateWaveformPreview();
-
-    // Switch VCO Loop audio buffer if running in drawing mode
-    if (window.vcoLoop && vcoLoop.isOscRunning && vcoLoop.isDrawingOsc) {
-      vcoLoop.switchDrawBuffer(this.activeSlot);
-    }
+    const nextSlot = (this.activeSlot + 1) % this.visibleSlotCount;
+    this.switchSlot(nextSlot);
   }
 
   // Import SVG path data from Unim glyph into active slot

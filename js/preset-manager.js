@@ -71,10 +71,21 @@ class PresetManager {
         visibleSlotCount: drawingMode.visibleSlotCount,
         activeSlot: drawingMode.activeSlot,
         slots: drawingMode.slots.map(slot => ({
+          name: slot.name,
           points: slot.points.map(p => ({ x: p.x, y: p.y })),
           waveX: [...slot.waveX],
           waveY: [...slot.waveY],
         })),
+        activePattern: drawingMode.activePattern,
+        patternBank: drawingMode.patternBank.map(p => p ? {
+          visibleSlotCount: p.visibleSlotCount,
+          slots: p.slots.map(slot => ({
+            name: slot.name,
+            points: slot.points.map(pt => ({ x: pt.x, y: pt.y })),
+            waveX: [...slot.waveX],
+            waveY: [...slot.waveY],
+          }))
+        } : null),
       };
     }
 
@@ -93,6 +104,13 @@ class PresetManager {
         mode2: midiIn.mode2,
         deviceName:  midiIn.selectedInput  ? midiIn.selectedInput.name  : null,
         deviceName2: midiIn.selectedInput2 ? midiIn.selectedInput2.name : null,
+      };
+    }
+
+    // Audio Engine (Synth UI params)
+    if (window.audioEngine) {
+      state.audioEngine = {
+        params: { ...audioEngine.params }
       };
     }
 
@@ -166,21 +184,41 @@ class PresetManager {
 
     // Drawing Mode
     if (state.drawing && window.drawingMode) {
+      // 1. Load active slots
       drawingMode.visibleSlotCount = state.drawing.visibleSlotCount || 8;
       drawingMode.activeSlot = state.drawing.activeSlot || 0;
       state.drawing.slots.forEach((saved, i) => {
         if (i < drawingMode.slots.length) {
+          if (saved.name) drawingMode.slots[i].name = saved.name;
           drawingMode.slots[i].points = saved.points.map(p => ({ x: p.x, y: p.y }));
           drawingMode.slots[i].waveX = [...saved.waveX];
           drawingMode.slots[i].waveY = [...saved.waveY];
         }
       });
-      // Update slot count buttons
+      // 2. Load pattern bank
+      if (state.drawing.patternBank) {
+        drawingMode.activePattern = state.drawing.activePattern || 0;
+        drawingMode.patternBank = state.drawing.patternBank.map(p => {
+          if (!p) return null;
+          return {
+            visibleSlotCount: p.visibleSlotCount || 8,
+            slots: p.slots.map(slot => ({
+              name: slot.name,
+              points: slot.points.map(pt => ({ x: pt.x, y: pt.y })),
+              waveX: [...slot.waveX],
+              waveY: [...slot.waveY],
+            }))
+          };
+        });
+      }
+      
+      // Update UI components
       document.getElementById('draw-slots-8')?.classList.toggle('active', drawingMode.visibleSlotCount === 8);
       document.getElementById('draw-slots-16')?.classList.toggle('active', drawingMode.visibleSlotCount === 16);
       drawingMode.buildSlotTabs();
       drawingMode.redrawCanvas();
       drawingMode.updateWaveformPreview();
+      drawingMode.buildPatternBankUI();
     }
 
     // Effects Engine
@@ -203,7 +241,31 @@ class PresetManager {
       midiIn._pendingDeviceName2 = state.midiIn.deviceName2 || null;
     }
 
+    // Audio Engine (Synth UI params)
+    if (state.audioEngine && state.audioEngine.params && window.audioEngine) {
+      Object.entries(state.audioEngine.params).forEach(([key, value]) => {
+        // Set param in audio engine state directly so UI and audio are sync'd
+        audioEngine.params[key] = value;
+      });
+      // Fire updates so ui components reflect new values
+      this.syncParamUIDom();
+    }
+
     return true;
+  }
+
+  syncParamUIDom() {
+    // Utility to sync `.param-slider` values from `audioEngine.params`
+    if (!window.audioEngine) return;
+    const sliders = document.querySelectorAll('.param-slider');
+    sliders.forEach(slider => {
+      const pName = slider.dataset.param;
+      if (pName && audioEngine.params[pName] !== undefined) {
+        slider.value = audioEngine.params[pName];
+        // Manually trigger the 'input' event to update labels and logic
+        slider.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    });
   }
 
   // ===== FILE EXPORT/IMPORT =====
