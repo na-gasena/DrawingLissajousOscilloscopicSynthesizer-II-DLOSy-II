@@ -1196,6 +1196,14 @@ body {
   padding: 0 6px !important;
 }
 
+.draw-header-controls .small-btn.active {
+  background: var(--accent-cyan);
+  color: #111;
+  border-color: var(--accent-cyan);
+  font-weight: bold;
+  box-shadow: 0 0 8px rgba(0, 229, 255, 0.4);
+}
+
 .preview-active {
   background: var(--accent-cyan) !important;
   color: #111 !important;

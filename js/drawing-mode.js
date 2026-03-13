@@ -23,6 +23,10 @@ class DrawingMode {
       this.patternBank.push(null);
     }
 
+    // Tool state
+    this.toolMode = 'draw'; // 'draw' or 'erase'
+    this.eraserRadius = 15;
+
     // Canvas
     this.canvas = null;
     this.ctx2d = null;
@@ -53,6 +57,9 @@ class DrawingMode {
       <div class="panel-title">
         DRAWING MODE
         <div class="draw-header-controls">
+          <button id="draw-tool-draw" class="small-btn ${this.toolMode === 'draw' ? 'active' : ''}" title="Draw Tool">DRAW</button>
+          <button id="draw-tool-erase" class="small-btn ${this.toolMode === 'erase' ? 'active' : ''}" title="Eraser Tool">ERASE</button>
+          <span class="seq-separator">|</span>
           <button id="draw-slots-8" class="small-btn step-count-btn active" data-slots="8">8</button>
           <button id="draw-slots-16" class="small-btn step-count-btn" data-slots="16">16</button>
           <span class="seq-separator">|</span>
@@ -217,6 +224,19 @@ class DrawingMode {
   }
 
   bindControls() {
+    // Tool selection
+    document.getElementById('draw-tool-draw')?.addEventListener('click', (e) => {
+      this.setToolMode('draw');
+      document.getElementById('draw-tool-draw').classList.add('active');
+      document.getElementById('draw-tool-erase').classList.remove('active');
+    });
+    
+    document.getElementById('draw-tool-erase')?.addEventListener('click', (e) => {
+      this.setToolMode('erase');
+      document.getElementById('draw-tool-erase').classList.add('active');
+      document.getElementById('draw-tool-draw').classList.remove('active');
+    });
+
     document.getElementById('draw-clear-btn')?.addEventListener('click', () => {
       this.slots[this.activeSlot].points = [];
       this.slots[this.activeSlot].waveX = [];
@@ -345,7 +365,18 @@ class DrawingMode {
     }
   }
 
-  // ===== DRAWING =====
+  // ===== DRAWING / ERASING =====
+
+  setToolMode(mode) {
+    this.toolMode = mode;
+    if (this.canvas) {
+      if (mode === 'erase') {
+        this.canvas.style.cursor = 'crosshair';
+      } else {
+        this.canvas.style.cursor = 'default';
+      }
+    }
+  }
 
   getCanvasPos(e) {
     const rect = this.canvas.getBoundingClientRect();
@@ -357,12 +388,59 @@ class DrawingMode {
     };
   }
 
+  erasePoints(pos) {
+    const pts = this.slots[this.activeSlot].points;
+    let erased = false;
+    
+    // Iterate forwards to properly split strokes
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i];
+      const dx = p.x - pos.x;
+      const dy = p.y - pos.y;
+      
+      // If the point is within the eraser radius
+      if (dx * dx + dy * dy < this.eraserRadius * this.eraserRadius) {
+        // If there's a next point and it's NOT a new stroke,
+        // we must make it the start of a new stroke to break the path.
+        if (i < pts.length - 1 && !pts[i+1].newStroke) {
+          pts[i+1].newStroke = true;
+        }
+        
+        // Remove the current point
+        pts.splice(i, 1);
+        erased = true;
+        
+        // Decrement i since we modified the array in place
+        i--;
+      }
+    }
+    
+    if (erased) {
+      this.redrawCanvas();
+      this.convertToWaveform();
+      this.updateWaveformPreview();
+      this.updatePointCount();
+      if (this.isPreviewPlaying) {
+        this.applyWaveformToPreview();
+      }
+      if (window.vcoLoop) {
+        vcoLoop.refreshDrawingOsc();
+      }
+    }
+    return erased;
+  }
+
   onMouseDown(e) {
     this.isDrawing = true;
     const pos = this.getCanvasPos(e);
-    // Start new stroke
-    this.slots[this.activeSlot].points.push({ x: pos.x, y: pos.y, newStroke: true });
-    this.drawPoint(pos);
+    
+    if (this.toolMode === 'erase') {
+      this.erasePoints(pos);
+    } else {
+      // Start new stroke
+      this.slots[this.activeSlot].points.push({ x: pos.x, y: pos.y, newStroke: true });
+      this.drawPoint(pos);
+    }
   }
 
   onMouseMove(e) {
@@ -371,19 +449,24 @@ class DrawingMode {
     this.updateCoords(pos);
 
     if (!this.isDrawing) return;
-    this.slots[this.activeSlot].points.push({ x: pos.x, y: pos.y, newStroke: false });
-    this.drawSegment(pos);
-    this.convertToWaveform();
-    this.updateWaveformPreview();
-    this.updatePointCount();
 
-    // Real-time audio feedback
-    if (this.isPreviewPlaying) {
-      this.applyWaveformToPreview();
-    }
-    // Refresh VCO Loop if it's using this drawing
-    if (window.vcoLoop) {
-      vcoLoop.refreshDrawingOsc();
+    if (this.toolMode === 'erase') {
+      this.erasePoints(pos);
+    } else {
+      this.slots[this.activeSlot].points.push({ x: pos.x, y: pos.y, newStroke: false });
+      this.drawSegment(pos);
+      this.convertToWaveform();
+      this.updateWaveformPreview();
+      this.updatePointCount();
+
+      // Real-time audio feedback
+      if (this.isPreviewPlaying) {
+        this.applyWaveformToPreview();
+      }
+      // Refresh VCO Loop if it's using this drawing
+      if (window.vcoLoop) {
+        vcoLoop.refreshDrawingOsc();
+      }
     }
   }
 
@@ -398,8 +481,13 @@ class DrawingMode {
     const scaleX = this.canvas.width / rect.width;
     const scaleY = this.canvas.height / rect.height;
     const pos = { x: (touch.clientX - rect.left) * scaleX, y: (touch.clientY - rect.top) * scaleY };
-    this.slots[this.activeSlot].points.push({ x: pos.x, y: pos.y, newStroke: true });
-    this.drawPoint(pos);
+    
+    if (this.toolMode === 'erase') {
+      this.erasePoints(pos);
+    } else {
+      this.slots[this.activeSlot].points.push({ x: pos.x, y: pos.y, newStroke: true });
+      this.drawPoint(pos);
+    }
   }
 
   onTouchMove(e) {
@@ -409,12 +497,20 @@ class DrawingMode {
     const scaleX = this.canvas.width / rect.width;
     const scaleY = this.canvas.height / rect.height;
     const pos = { x: (touch.clientX - rect.left) * scaleX, y: (touch.clientY - rect.top) * scaleY };
-    this.slots[this.activeSlot].points.push({ x: pos.x, y: pos.y, newStroke: false });
-    this.drawSegment(pos);
-    this.convertToWaveform();
-    this.updateWaveformPreview();
-    if (this.isPreviewPlaying) {
-      this.applyWaveformToPreview();
+    
+    if (this.toolMode === 'erase') {
+      this.erasePoints(pos);
+    } else {
+      this.slots[this.activeSlot].points.push({ x: pos.x, y: pos.y, newStroke: false });
+      this.drawSegment(pos);
+      this.convertToWaveform();
+      this.updateWaveformPreview();
+      if (this.isPreviewPlaying) {
+        this.applyWaveformToPreview();
+      }
+      if (window.vcoLoop) {
+        vcoLoop.refreshDrawingOsc();
+      }
     }
   }
 
