@@ -35,7 +35,7 @@ class VCOLoop {
 
     // Continuous mode
     this.continuousMode = false; // false=STEP, true=CONTINUOUS
-    this.continuousRAF = null;
+    this._continuousTimerId = null;
     this.stepStartTime = 0;
     this.stepDuration = 0; // ms per bar
     this.lastStepIndex = 0;
@@ -47,6 +47,14 @@ class VCOLoop {
     for (let i = 0; i < 8; i++) {
       this.patternBank.push(null);
     }
+
+    // Pattern chaining: play a selected set of patterns in sequence, advancing
+    // one pattern per loop cycle (bar). 'off' = normal single pattern.
+    this.chainMode = 'off';      // 'off' | 'manual' | 'random'
+    this.chainSet = new Set();   // selected pattern indices (0-7)
+    this.chainPos = 0;           // index into the sorted chain list
+    this._lastTickStep = -1;     // for detecting bar boundaries
+    this._chainGen = 0;          // invalidates pending (deferred) advances
   }
 
   // ===== MIDI HELPERS =====
@@ -96,16 +104,17 @@ class VCOLoop {
     this.patternBank[this.activePattern] = {
       waveType: this.waveType,
       masterVolume: this.masterVolume,
-      continuousMode: this.continuousMode,
       curves: saved
     };
-    // Load target
+    // Load target. NOTE: STEP/CONT (continuousMode) is a GLOBAL playback
+    // setting, not part of a pattern — loading it here would make chaining flip
+    // between stepped and continuous articulation per pattern. So it is left
+    // untouched on pattern switch.
     this.activePattern = index;
     const target = this.patternBank[index];
     if (target) {
       this.waveType = target.waveType;
       this.masterVolume = target.masterVolume;
-      this.continuousMode = target.continuousMode;
       Object.entries(target.curves).forEach(([key, points]) => {
         if (this.curves[key]) {
           this.curves[key].points = points.map(p => ({ x: p.x, y: p.y }));
@@ -123,6 +132,7 @@ class VCOLoop {
     }
     this.drawCurve();
     this.buildPatternBankUI();
+    this.updateChainActive();
     // Update wave buttons
     document.querySelectorAll('.vco-wave-btn').forEach(b => {
       b.classList.toggle('active', b.dataset.wave === this.waveType);
@@ -157,10 +167,143 @@ class VCOLoop {
     }
   }
 
+  // ===== PATTERN CHAINING =====
+
+  // Sorted list of selected pattern indices.
+  get chainList() {
+    return Array.from(this.chainSet).sort((a, b) => a - b);
+  }
+
+  setChainMode(mode) {
+    if (!['off', 'manual', 'random'].includes(mode)) return;
+    const wasOff = this.chainMode === 'off';
+    this.chainMode = mode;
+    if (mode !== 'off') {
+      // Default to the current pattern if nothing is selected yet.
+      if (this.chainSet.size === 0) this.chainSet.add(this.activePattern);
+      // When enabling the chain, jump to the first selected pattern so playback
+      // starts the sequence from its beginning (1 → 2 → 3 → 1 …).
+      if (wasOff) {
+        this.chainPos = 0;
+        const first = this.chainList[0];
+        if (first !== undefined && first !== this.activePattern) this.switchPattern(first);
+      }
+    }
+    this._lastTickStep = -1;
+    this._chainGen++;
+    this.buildChainUI();
+    if (window.presetManager) presetManager.autoSave?.();
+  }
+
+  toggleChainMember(index) {
+    if (this.chainSet.has(index)) this.chainSet.delete(index);
+    else this.chainSet.add(index);
+    this._chainGen++; // cancel pending deferred advances tied to the old set
+    this.buildChainUI();
+    if (window.presetManager) presetManager.autoSave?.();
+  }
+
+  resetChain() {
+    this.chainMode = 'off';
+    this.chainSet.clear();
+    this.chainPos = 0;
+    this._lastTickStep = -1;
+    this._chainGen++;
+    this.buildChainUI();
+    if (window.presetManager) presetManager.autoSave?.();
+  }
+
+  // Schedule a chain advance at the step's audio time (whenMs is a
+  // performance.now()-based timestamp). Deferring spreads burst-scheduled bar
+  // boundaries out to their real playback moments instead of all at once.
+  _scheduleChainAdvance(whenMs) {
+    const delay = (typeof whenMs === 'number') ? whenMs - performance.now() : 0;
+    if (delay <= 8) {
+      this._advanceChain();
+      return;
+    }
+    const gen = this._chainGen;
+    setTimeout(() => {
+      // Skip if the chain was changed/disabled or playback stopped meanwhile.
+      if (gen !== this._chainGen) return;
+      if (this.chainMode === 'off') return;
+      if (window.stepSequencer && !stepSequencer.isPlaying) return;
+      this._advanceChain();
+    }, delay);
+  }
+
+  // Advance to the next pattern in the chain (called once per loop cycle).
+  _advanceChain() {
+    const list = this.chainList;
+    if (list.length === 0) return;
+
+    let next;
+    if (this.chainMode === 'random') {
+      if (list.length === 1) {
+        next = list[0];
+      } else {
+        // Pick a different pattern than the current one.
+        do {
+          next = list[Math.floor(Math.random() * list.length)];
+        } while (next === this.activePattern);
+      }
+    } else {
+      // manual: step through the list in order
+      this.chainPos = (this.chainPos + 1) % list.length;
+      next = list[this.chainPos];
+    }
+
+    if (next !== this.activePattern) this.switchPattern(next);
+    this.updateChainActive();
+  }
+
+  buildChainUI() {
+    const panel = document.getElementById('vco-loop-panel');
+    if (!panel) return;
+    let bar = panel.querySelector('#vco-chain-bar');
+    if (!bar) return;
+
+    const cells = Array.from({ length: 8 }, (_, i) => {
+      const inSet = this.chainSet.has(i);
+      const isActive = this.chainMode !== 'off' && i === this.activePattern && inSet;
+      return `<button class="vco-chain-cell${inSet ? ' selected' : ''}${isActive ? ' playing' : ''}" data-chain="${i}">${i + 1}</button>`;
+    }).join('');
+
+    bar.innerHTML = `
+      <span class="vco-chain-label">CHAIN</span>
+      <div class="vco-chain-modes">
+        <button class="vco-chain-mode${this.chainMode === 'off' ? ' active' : ''}" data-cmode="off">OFF</button>
+        <button class="vco-chain-mode${this.chainMode === 'manual' ? ' active' : ''}" data-cmode="manual">SEQ</button>
+        <button class="vco-chain-mode${this.chainMode === 'random' ? ' active' : ''}" data-cmode="random">RND</button>
+      </div>
+      <div class="vco-chain-cells${this.chainMode === 'off' ? ' disabled' : ''}">${cells}</div>
+      <button class="vco-chain-reset small-btn" title="チェーンを解除">RESET</button>
+    `;
+
+    bar.querySelectorAll('.vco-chain-mode').forEach((b) => {
+      b.addEventListener('click', () => this.setChainMode(b.dataset.cmode));
+    });
+    bar.querySelectorAll('.vco-chain-cell').forEach((b) => {
+      b.addEventListener('click', () => this.toggleChainMember(parseInt(b.dataset.chain, 10)));
+    });
+    bar.querySelector('.vco-chain-reset')?.addEventListener('click', () => this.resetChain());
+  }
+
+  // Lightweight refresh of just the "playing" highlight (avoids full rebuild).
+  updateChainActive() {
+    const panel = document.getElementById('vco-loop-panel');
+    if (!panel) return;
+    panel.querySelectorAll('.vco-chain-cell').forEach((b) => {
+      const i = parseInt(b.dataset.chain, 10);
+      b.classList.toggle('playing', this.chainMode !== 'off' && i === this.activePattern && this.chainSet.has(i));
+    });
+  }
+
   init() {
     this.buildUI();
     this.bindControls();
     this.buildPatternBankUI();
+    this.buildChainUI();
   }
 
   // ===== AUDIO =====
@@ -404,8 +547,18 @@ class VCOLoop {
 
   // ===== SYNC WITH STEP SEQUENCER =====
 
-  onStepTick(stepIndex, totalSteps) {
+  onStepTick(stepIndex, totalSteps, whenMs) {
     if (!this.enabled) return;
+
+    // Pattern chaining: advance one pattern per loop cycle (when the bar wraps).
+    // The lookahead scheduler can fire many steps in a single burst (especially
+    // when the tab is hidden, with a 2s schedule window), so advancing here at
+    // schedule time would jump several patterns at once. Defer the advance to
+    // the step's actual audio time so switches stay aligned with what's heard.
+    if (this.chainMode !== 'off' && stepIndex < this._lastTickStep) {
+      this._scheduleChainAdvance(whenMs);
+    }
+    this._lastTickStep = stepIndex;
 
     this.lastStepIndex = stepIndex;
     this.lastTotalSteps = totalSteps;
@@ -419,19 +572,24 @@ class VCOLoop {
         this.stepDuration = (60000 / bpm) / 4; // per-step duration in ms
       }
     } else {
-      // STEP mode: discrete update with ADSR envelope
-      this.playheadPosition = stepIndex / totalSteps;
-      this.applyAtPosition(this.playheadPosition);
-      this._fireStepADSR(stepIndex, totalSteps);
+      // STEP mode: discrete update with ADSR envelope.
+      // Apply easing to the per-step sampled position so the modulation curve
+      // is traversed non-uniformly across steps (same easing model as CONT).
+      const linearPos = stepIndex / totalSteps;
+      const easedPos = window.vcoEase ? vcoEase.apply(linearPos) : linearPos;
+      this.playheadPosition = easedPos;
+      this.applyAtPosition(easedPos);
+      this._fireStepADSR(stepIndex, totalSteps, easedPos);
     }
   }
 
-  _fireStepADSR(stepIndex, totalSteps) {
+  _fireStepADSR(stepIndex, totalSteps, samplePos) {
     if (!this.gain || !this.isOscRunning) return;
     const ctx = audioEngine.ctx;
     const now = ctx.currentTime;
 
-    const vol = this.getValueAt('volume', stepIndex / totalSteps) * this.masterVolume;
+    const pos = (samplePos !== undefined) ? samplePos : stepIndex / totalSteps;
+    const vol = this.getValueAt('volume', pos) * this.masterVolume;
 
     // Calculate step duration
     const bpm = (window.stepSequencer && stepSequencer.bpm) || 120;
@@ -458,6 +616,7 @@ class VCOLoop {
   onPlayStart() {
     if (!this.enabled) return;
     if (!audioEngine.isInitialized) return;
+    this._lastTickStep = -1; // fresh bar detection for this run
     this.startOsc();
     if (this.continuousMode) {
       this.startContinuousLoop();
@@ -469,35 +628,46 @@ class VCOLoop {
     this.stopContinuousLoop();
     this.playheadPosition = 0;
     this.updatePlayhead();
+    this._chainGen++;        // cancel any pending deferred chain advances
+    this._lastTickStep = -1;
   }
 
   // ===== CONTINUOUS MODE =====
 
+  // Uses setInterval instead of requestAnimationFrame: rAF is fully paused
+  // when the tab/window is hidden or occluded (e.g. Ableton covering the
+  // browser), which would freeze this modulation. Audio-producing tabs are
+  // exempt from Chrome's aggressive background-timer throttling, so
+  // setInterval keeps ticking. The position is recomputed from absolute
+  // timestamps each tick, so irregular tick timing doesn't cause drift.
   startContinuousLoop() {
     this.stopContinuousLoop();
-    const loop = () => {
+    const TICK_MS = 20;
+
+    this._continuousTimerId = setInterval(() => {
       if (!this.enabled || !this.isOscRunning) return;
 
       const now = performance.now();
       const elapsed = now - this.stepStartTime;
       const stepFraction = this.stepDuration > 0 ? Math.min(elapsed / this.stepDuration, 1) : 0;
 
-      // Smoothly interpolate playhead between steps
-      this.playheadPosition = (this.lastStepIndex + stepFraction) / this.lastTotalSteps;
-      if (this.playheadPosition > 1) this.playheadPosition = 1;
+      // Linear phase 0..1 across the whole bar (loop cycle)
+      let linearPhase = (this.lastStepIndex + stepFraction) / this.lastTotalSteps;
+      if (linearPhase > 1) linearPhase = 1;
+
+      // Remap the phase through an easing curve so the loop's playback speed
+      // can accelerate/decelerate within the bar (slope of position = speed).
+      this.playheadPosition = window.vcoEase ? vcoEase.apply(linearPhase) : linearPhase;
 
       this.applyAtPosition(this.playheadPosition);
       this.updatePlayhead();
-
-      this.continuousRAF = requestAnimationFrame(loop);
-    };
-    this.continuousRAF = requestAnimationFrame(loop);
+    }, TICK_MS);
   }
 
   stopContinuousLoop() {
-    if (this.continuousRAF) {
-      cancelAnimationFrame(this.continuousRAF);
-      this.continuousRAF = null;
+    if (this._continuousTimerId) {
+      clearInterval(this._continuousTimerId);
+      this._continuousTimerId = null;
     }
   }
 
@@ -529,6 +699,7 @@ class VCOLoop {
           </div>
         </div>
       </div>
+      <div class="vco-chain-bar" id="vco-chain-bar"></div>
       <div class="vco-param-tabs" id="vco-param-tabs">
         <!-- tabs generated by JS -->
       </div>

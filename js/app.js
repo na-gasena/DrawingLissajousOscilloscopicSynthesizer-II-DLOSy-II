@@ -64,6 +64,16 @@ document.addEventListener('DOMContentLoaded', () => {
     arpeggiator.init();
   }
 
+  // Initialize VCO Loop Easing
+  if (window.vcoEase) {
+    vcoEase.init();
+  }
+
+  // Initialize Panel Layout (drag-to-resize / drag-to-reorder)
+  if (window.panelLayout) {
+    panelLayout.init();
+  }
+
   // ===== Left panel tab switching (SYNTH / SETTINGS) =====
   function switchLeftTab(tabName) {
     document.querySelectorAll('.left-tab').forEach(t => t.classList.remove('active'));
@@ -102,6 +112,14 @@ document.addEventListener('DOMContentLoaded', () => {
     if (window.arpeggiator && target === 'arp') {
       requestAnimationFrame(() => {
         if (arpeggiator.drawAdsrCurve) arpeggiator.drawAdsrCurve();
+      });
+    }
+
+    // Redraw Easing canvas after tab becomes visible (resize sync)
+    if (window.vcoEase && target === 'ease') {
+      requestAnimationFrame(() => {
+        vcoEase.syncCanvasSize();
+        vcoEase.draw();
       });
     }
   }

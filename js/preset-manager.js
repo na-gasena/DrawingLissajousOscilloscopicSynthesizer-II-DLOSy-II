@@ -57,6 +57,8 @@ class PresetManager {
         curves: {},
         activePattern: vcoLoop.activePattern,
         patternBank: vcoLoop.patternBank.map(p => p ? JSON.parse(JSON.stringify(p)) : null),
+        chainMode: vcoLoop.chainMode,
+        chainSet: Array.from(vcoLoop.chainSet),
       };
       Object.entries(vcoLoop.curves).forEach(([key, curve]) => {
         state.vcoLoop.curves[key] = {
@@ -87,6 +89,11 @@ class PresetManager {
           }))
         } : null),
       };
+    }
+
+    // VCO Loop Easing
+    if (window.vcoEase) {
+      state.vcoEase = vcoEase.getState();
     }
 
     // Effects Engine
@@ -171,8 +178,12 @@ class PresetManager {
         vcoLoop.activePattern = state.vcoLoop.activePattern || 0;
         vcoLoop.patternBank = state.vcoLoop.patternBank.map(p => p ? JSON.parse(JSON.stringify(p)) : null);
       }
+      // Pattern chaining
+      if (state.vcoLoop.chainMode) vcoLoop.chainMode = state.vcoLoop.chainMode;
+      if (Array.isArray(state.vcoLoop.chainSet)) vcoLoop.chainSet = new Set(state.vcoLoop.chainSet);
       vcoLoop.drawCurve();
       vcoLoop.buildPatternBankUI();
+      vcoLoop.buildChainUI();
       // Update wave button UI
       document.querySelectorAll('.vco-wave-btn').forEach(b => {
         b.classList.toggle('active', b.dataset.wave === vcoLoop.waveType);
@@ -180,6 +191,11 @@ class PresetManager {
       // Update volume slider
       const volSlider = document.getElementById('vco-vol-slider');
       if (volSlider) volSlider.value = Math.round(vcoLoop.masterVolume * 100);
+    }
+
+    // VCO Loop Easing
+    if (state.vcoEase && window.vcoEase) {
+      vcoEase.setState(state.vcoEase);
     }
 
     // Drawing Mode

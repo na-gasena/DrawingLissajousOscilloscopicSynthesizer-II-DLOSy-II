@@ -580,10 +580,10 @@ class StepSequencer {
 
       // Sync: update VCO Loop playhead and apply parameters
       if (window.vcoLoop) {
-        vcoLoop.onStepTick(this.currentStep, this.numSteps);
+        vcoLoop.onStepTick(this.currentStep, this.numSteps, midiTimestamp);
         vcoLoop.drawCurve();
       }
-      return; 
+      return;
     }
 
     const step = this.steps[this.currentStep];
@@ -628,7 +628,7 @@ class StepSequencer {
 
     // Sync: update VCO Loop playhead and apply parameters
     if (window.vcoLoop) {
-      vcoLoop.onStepTick(this.currentStep, this.numSteps);
+      vcoLoop.onStepTick(this.currentStep, this.numSteps, midiTimestamp);
       vcoLoop.drawCurve();
     }
   }
