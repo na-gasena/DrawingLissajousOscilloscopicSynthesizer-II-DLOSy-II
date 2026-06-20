@@ -31,25 +31,42 @@ class MidiClockSync {
   // ===== MIDI ACCESS =====
 
   async connectMIDI() {
-    // Share from midiOut or midiIn
-    if (window.midiOut && midiOut.midiAccess) {
-      this.midiAccess = midiOut.midiAccess;
-    } else if (window.midiIn && midiIn.midiAccess) {
-      this.midiAccess = midiIn.midiAccess;
-    } else {
-      if (!navigator.requestMIDIAccess) {
-        this.updateStatus('MIDI N/A');
-        return;
-      }
-      try {
-        this.midiAccess = await navigator.requestMIDIAccess();
-      } catch (e) {
-        this.updateStatus('Denied');
-        return;
-      }
+    if (!navigator.requestMIDIAccess) {
+      this.updateStatus('MIDI N/A');
+      this.updateDiag('❌ Web MIDI API is not supported in this browser.\nChrome/Edge only.');
+      return;
     }
+
+    this.updateDiag('Requesting MIDI access...');
+
+    try {
+      // Try with sysex:true first (needed on some Chrome builds for full device visibility)
+      try {
+        this.midiAccess = await navigator.requestMIDIAccess({ sysex: true });
+        this.updateDiag('✅ Permission granted (sysex:true)');
+      } catch (sysexErr) {
+        // Fallback without sysex
+        this.midiAccess = await navigator.requestMIDIAccess({ sysex: false });
+        this.updateDiag('✅ Permission granted (sysex:false)');
+      }
+    } catch (e) {
+      this.updateStatus('Denied');
+      this.updateDiag('❌ MIDI Access DENIED.\n\nFix: Chrome アドレスバー左の🔒→サイトの設定\n→MIDIを「許可」に変更してページ再読込');
+      console.error('MIDI CLK: requestMIDIAccess failed:', e);
+      return;
+    }
+
     this.populateInputs();
-    this.midiAccess.addEventListener('statechange', () => this.populateInputs());
+
+    // Use addEventListener so other modules' handlers are not overwritten
+    this.midiAccess.addEventListener('statechange', (e) => {
+      console.log('MIDI CLK statechange:', e.port?.name, e.port?.state);
+      this.populateInputs();
+    });
+
+    const count = this.midiAccess.inputs.size;
+    console.log('MIDI CLK: inputs found =', count);
+    this.midiAccess.inputs.forEach(p => console.log('  -', p.name, p.state));
   }
 
   attachInput(deviceId) {
@@ -162,14 +179,15 @@ class MidiClockSync {
   setEnabled(on) {
     this.enabled = on;
     if (on) {
-      if (!this.midiAccess) this.connectMIDI();
+      if (!this.midiAccess) {
+        this.connectMIDI();
+      } else {
+        // Already have access — re-scan in case new devices appeared
+        this.populateInputs();
+      }
       this.updateStatus('Waiting...');
     } else {
       this.updateStatus('Off');
-      // If sequencer was running externally, stop it
-      if (window.stepSequencer && stepSequencer.isPlaying) {
-        // Re-enable internal scheduler if user presses play again
-      }
     }
     document.getElementById('midi-clk-toggle')?.classList.toggle('midi-active', on);
   }
@@ -188,6 +206,7 @@ class MidiClockSync {
           <select id="midi-clk-input-select" class="midi-select">
             <option value="">-- MIDI Input --</option>
           </select>
+          <button id="midi-clk-refresh" class="small-btn" title="Refresh / Re-scan MIDI devices">⟳</button>
         </div>
         <div class="cv-clock-row">
           <span class="cv-label">RATE</span>
@@ -200,8 +219,18 @@ class MidiClockSync {
           <span id="midi-clk-bpm" class="cv-val cv-bpm">---</span>
           <span id="midi-clk-status" class="cv-status">Off</span>
         </div>
+        <div id="midi-clk-diag" class="cv-clock-diag"></div>
       </div>
     `;
+
+    // Refresh button — always re-request MIDI access to pick up new devices
+    document.getElementById('midi-clk-refresh')?.addEventListener('click', async () => {
+      const btn = document.getElementById('midi-clk-refresh');
+      if (btn) { btn.textContent = '…'; btn.disabled = true; }
+      this.midiAccess = null; // force fresh request
+      await this.connectMIDI();
+      if (btn) { btn.textContent = '⟳'; btn.disabled = false; }
+    });
 
     // Toggle
     document.getElementById('midi-clk-toggle')?.addEventListener('click', () => {
@@ -247,18 +276,46 @@ class MidiClockSync {
   populateInputs() {
     const select = document.getElementById('midi-clk-input-select');
     if (!select || !this.midiAccess) return;
+
+    const prevVal = select.value;
     select.innerHTML = '<option value="">-- MIDI Input --</option>';
     this.midiAccess.inputs.forEach(input => {
       const opt = document.createElement('option');
       opt.value = input.id;
-      opt.textContent = input.name || `Input ${input.id}`;
+      opt.textContent = `${input.name} [${input.state}]`;
       select.appendChild(opt);
     });
-    // Auto-select first
-    if (this.midiAccess.inputs.size > 0 && !this.midiInput) {
-      const first = this.midiAccess.inputs.values().next().value;
-      this.attachInput(first.id);
-      select.value = first.id;
+
+    const count = this.midiAccess.inputs.size;
+    if (count === 0) {
+      this.updateStatus('No MIDI inputs');
+      // Build diag string listing all raw info
+      let diagLines = ['Inputs: 0 — no MIDI ports found.'];
+      diagLines.push('');
+      diagLines.push('❗ loopMIDIポートは作成済みですか？');
+      diagLines.push('(loopMIDI → Port Name 入力 → + ボタン)');
+      diagLines.push('');
+      diagLines.push('❗ Chrome MIDI許可を確認:');
+      diagLines.push('アドレスバー左の🔒アイコン');
+      diagLines.push('→ [MIDI] → [許可]');
+      diagLines.push('→ ページを再読込み');
+      this.updateDiag(diagLines.join('\n'));
+    } else {
+      this.updateStatus(`${count} port${count > 1 ? 's' : ''} found`);
+      let diagLines = [`Inputs: ${count}`];
+      this.midiAccess.inputs.forEach(p => {
+        diagLines.push(`• ${p.name} [${p.state}] id:${p.id.slice(0,8)}`);
+      });
+      this.updateDiag(diagLines.join('\n'));
+      // Restore previous selection
+      if (prevVal && select.querySelector(`option[value="${prevVal}"]`)) {
+        select.value = prevVal;
+      } else if (!this.midiInput) {
+        // Auto-select first
+        const first = this.midiAccess.inputs.values().next().value;
+        this.attachInput(first.id);
+        select.value = first.id;
+      }
     }
   }
 
@@ -287,6 +344,13 @@ class MidiClockSync {
   updateStatus(text) {
     const el = document.getElementById('midi-clk-status');
     if (el) el.textContent = text;
+  }
+
+  updateDiag(text) {
+    const el = document.getElementById('midi-clk-diag');
+    if (!el) return;
+    el.textContent = text;
+    el.style.display = text ? 'block' : 'none';
   }
 }
 

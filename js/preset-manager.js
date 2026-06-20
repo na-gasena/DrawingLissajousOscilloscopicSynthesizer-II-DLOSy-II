@@ -101,18 +101,10 @@ class PresetManager {
       state.effects = effectsEngine.collectState();
     }
 
-    // MIDI In
-    if (window.midiIn) {
-      state.midiIn = {
-        enabled: midiIn.enabled,
-        ccMap:  JSON.parse(JSON.stringify(midiIn.ccMap)),
-        ccMap2: JSON.parse(JSON.stringify(midiIn.ccMap2)),
-        mode:  midiIn.mode,
-        mode2: midiIn.mode2,
-        deviceName:  midiIn.selectedInput  ? midiIn.selectedInput.name  : null,
-        deviceName2: midiIn.selectedInput2 ? midiIn.selectedInput2.name : null,
-      };
-    }
+    // NOTE: MIDI controller config is intentionally NOT stored here.
+    // It is a hardware-setup concern owned by midi-in.js in its own
+    // persistent store (dlosy20_midi_config), so loading a sound preset
+    // never clobbers the user's controller mapping.
 
     // Audio Engine (Synth UI params)
     if (window.audioEngine) {
@@ -242,20 +234,9 @@ class PresetManager {
       effectsEngine.applyState(state.effects);
     }
 
-    // MIDI In
-    if (state.midiIn && window.midiIn) {
-      midiIn.ccMap  = state.midiIn.ccMap  || {};
-      midiIn.ccMap2 = state.midiIn.ccMap2 || {};
-      if (state.midiIn.mode)  midiIn.setMode(state.midiIn.mode);
-      if (state.midiIn.mode2) midiIn.setMode2(state.midiIn.mode2);
-      midiIn.enabled = !!state.midiIn.enabled;
-      document.getElementById('midi-in-toggle')
-        ?.classList.toggle('midi-active', midiIn.enabled);
-      const midiSt = document.getElementById('midi-in-status');
-      if (midiSt) midiSt.textContent = midiIn.enabled ? 'ON' : 'Off';
-      midiIn._pendingDeviceName  = state.midiIn.deviceName  || null;
-      midiIn._pendingDeviceName2 = state.midiIn.deviceName2 || null;
-    }
+    // NOTE: MIDI controller config is NOT applied from sound presets.
+    // It is owned by midi-in.js (dlosy20_midi_config) and must survive
+    // preset loads untouched.
 
     // Audio Engine (Synth UI params)
     if (state.audioEngine && state.audioEngine.params && window.audioEngine) {

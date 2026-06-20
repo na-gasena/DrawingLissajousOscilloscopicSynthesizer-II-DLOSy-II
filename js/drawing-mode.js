@@ -132,6 +132,10 @@ class DrawingMode {
     if (window.vcoLoop && vcoLoop.isOscRunning && vcoLoop.isDrawingOsc) {
       vcoLoop.switchDrawBuffer(this.activeSlot);
     }
+    // Switch Arpeggiator drawing buffer if running in drawing mode
+    if (window.arpeggiator && arpeggiator.refreshDrawingOsc) {
+      arpeggiator.refreshDrawingOsc();
+    }
   }
 
   // ===== PATTERN BANK =====
@@ -363,6 +367,10 @@ class DrawingMode {
     if (window.vcoLoop && vcoLoop.isOscRunning && vcoLoop.isDrawingOsc) {
       vcoLoop.refreshDrawingOsc();
     }
+    // Update Arpeggiator if running in drawing mode (real-time reflection)
+    if (window.arpeggiator && arpeggiator.refreshDrawingOsc) {
+      arpeggiator.refreshDrawingOsc();
+    }
   }
 
   // ===== DRAWING / ERASING =====
@@ -426,6 +434,9 @@ class DrawingMode {
       if (window.vcoLoop) {
         vcoLoop.refreshDrawingOsc();
       }
+      if (window.arpeggiator) {
+        arpeggiator.refreshDrawingOsc();
+      }
     }
     return erased;
   }
@@ -466,6 +477,10 @@ class DrawingMode {
       // Refresh VCO Loop if it's using this drawing
       if (window.vcoLoop) {
         vcoLoop.refreshDrawingOsc();
+      }
+      // Refresh Arpeggiator if it's using this drawing (real-time)
+      if (window.arpeggiator) {
+        arpeggiator.refreshDrawingOsc();
       }
     }
   }
@@ -510,6 +525,9 @@ class DrawingMode {
       }
       if (window.vcoLoop) {
         vcoLoop.refreshDrawingOsc();
+      }
+      if (window.arpeggiator) {
+        arpeggiator.refreshDrawingOsc();
       }
     }
   }

@@ -200,8 +200,26 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // First click / touch to init audio context
   const initAudio = async () => {
-    await audioEngine.init();
+    // Load saved sample rate + latency mode from localStorage
+    let savedSr = 48000;
+    let savedLatency = 'interactive';
+    try {
+      const raw = localStorage.getItem('dlosy20_audio_settings');
+      if (raw) {
+        const saved = JSON.parse(raw);
+        const srVal = parseInt(saved.sampleRate, 10);
+        if (!isNaN(srVal)) savedSr = srVal || null; // 0 = OS default → null
+        if (saved.latencyHint) savedLatency = saved.latencyHint;
+      }
+    } catch(e) {}
+
+    await audioEngine.init(savedSr, savedLatency);
     audioEngine.resume();
+    // Re-apply previously selected output device (a fresh AudioContext
+    // always starts on the OS default device until setSinkId runs again)
+    if (window.audioSettings) {
+      await audioSettings.applySinkId();
+    }
     // Initialize effects audio nodes after audio context is ready
     if (window.effectsEngine) {
       effectsEngine.initAudioNodes();
@@ -213,6 +231,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.addEventListener('click', initAudio, { once: true });
   document.addEventListener('touchstart', initAudio, { once: true });
+
 
   // Resume AudioContext when tab becomes visible again (browser may suspend it in background)
   document.addEventListener('visibilitychange', () => {

@@ -8,6 +8,11 @@ class AudioEngine {
     this.ctx = null;
     this.masterGain = null;
     this.isInitialized = false;
+    this.sampleRate = 48000; // default 48kHz
+    // 'interactive' (smallest buffer, lowest latency, most prone to dropouts),
+    // 'balanced', or 'playback' (largest buffer, most stable). Wired through
+    // from Audio Settings so the user can trade latency for glitch-free output.
+    this.latencyHint = 'interactive';
 
     // Synth nodes
     this.osc = null;
@@ -60,10 +65,15 @@ class AudioEngine {
     this.octaveMultipliers = [0.25, 0.5, 1.0, 2.0, 4.0];
   }
 
-  async init() {
+  async init(sampleRate, latencyHint) {
     if (this.isInitialized) return;
+    if (sampleRate !== undefined) this.sampleRate = sampleRate;
+    if (latencyHint !== undefined) this.latencyHint = latencyHint;
 
-    this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const ctxOptions = {};
+    if (this.sampleRate) ctxOptions.sampleRate = this.sampleRate;
+    if (this.latencyHint) ctxOptions.latencyHint = this.latencyHint;
+    this.ctx = new (window.AudioContext || window.webkitAudioContext)(ctxOptions);
 
     // Master gain
     this.masterGain = this.ctx.createGain();
@@ -109,7 +119,37 @@ class AudioEngine {
     });
 
     this.isInitialized = true;
-    console.log('AudioEngine initialized');
+    console.log(`AudioEngine initialized (sampleRate: ${this.ctx.sampleRate} Hz)`);
+  }
+
+  // Rebuild AudioContext with new sample rate
+  async reinit(sampleRate) {
+    if (sampleRate !== undefined) this.sampleRate = sampleRate;
+
+    // Stop and close old context
+    if (this.ctx) {
+      try { await this.ctx.close(); } catch(e) {}
+    }
+
+    // Reset state
+    this.isInitialized = false;
+    this.osc = null;
+    this.oscGain = null;
+
+    // Reinit effects engine nodes (mark as not ready so they rebuild)
+    if (window.effectsEngine) {
+      effectsEngine.audioNodesReady = false;
+    }
+
+    // Rebuild audio context
+    await this.init();
+
+    // Rebuild effects nodes
+    if (window.effectsEngine) {
+      effectsEngine.initAudioNodes();
+    }
+
+    console.log(`AudioEngine reinitialized (sampleRate: ${this.ctx.sampleRate} Hz)`);
   }
 
   resume() {

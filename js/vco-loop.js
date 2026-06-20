@@ -421,6 +421,10 @@ class VCOLoop {
   refreshDrawingOsc() {
     if (!this.isOscRunning || !this.isDrawingOsc) return;
     if (this.waveType !== 'drawing') return;
+    // Blank slot (cleared / switched to empty) → keep the current sound playing
+    // instead of dropping to the sine fallback. A new stroke refills it.
+    const slot = window.drawingMode && drawingMode.slots[drawingMode.activeSlot];
+    if (!slot || !slot.waveX || slot.waveX.length === 0) return;
     const savedPos = this.playheadPosition;
     this.stopOsc();
     this.startOsc();
@@ -695,7 +699,7 @@ class VCOLoop {
           </div>
           <div class="vco-vol-group">
             <span class="label">VOL</span>
-            <input id="vco-vol-slider" type="range" min="0" max="100" value="30" class="vco-vol-slider" />
+            <input id="vco-vol-slider" type="range" min="0" max="100" value="30" class="vco-vol-slider" data-midi-target="vcoMasterVol" />
           </div>
         </div>
       </div>

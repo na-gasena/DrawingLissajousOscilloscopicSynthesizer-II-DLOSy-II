@@ -21,7 +21,10 @@ class AudioSettings {
   loadSettings() {
     try {
       const raw = localStorage.getItem('dlosy20_audio_settings');
-      if (raw) this.savedSettings = JSON.parse(raw);
+      if (raw) {
+        this.savedSettings = JSON.parse(raw);
+        this.currentSinkId = this.savedSettings.sinkId || '';
+      }
     } catch (e) {}
   }
 
@@ -29,6 +32,7 @@ class AudioSettings {
     const settings = {
       sinkId: this.currentSinkId,
       latencyHint: document.getElementById('as-latency')?.value || 'interactive',
+      sampleRate: document.getElementById('as-samplerate-select')?.value || '48000',
     };
     localStorage.setItem('dlosy20_audio_settings', JSON.stringify(settings));
   }
@@ -72,6 +76,16 @@ class AudioSettings {
 
         <div class="as-row">
           <span class="as-label">Sample Rate</span>
+          <select id="as-samplerate-select" class="midi-select as-select">
+            <option value="0">OS Default</option>
+            <option value="44100">44,100 Hz (44.1 kHz)</option>
+            <option value="48000" selected>48,000 Hz (48 kHz)</option>
+            <option value="96000">96,000 Hz (96 kHz)</option>
+          </select>
+        </div>
+
+        <div class="as-row">
+          <span class="as-label">Actual Rate</span>
           <span id="as-samplerate" class="as-val">--</span>
         </div>
 
@@ -106,8 +120,49 @@ class AudioSettings {
       this.setOutputDevice(e.target.value);
     });
 
-    document.getElementById('as-latency')?.addEventListener('change', () => {
+    // Latency mode change → rebuild AudioContext with new latencyHint
+    // (a larger buffer / 'playback' mode is the main lever against dropouts).
+    document.getElementById('as-latency')?.addEventListener('change', async (e) => {
+      const hint = e.target.value || 'interactive';
+      const sel = e.target;
+      sel.disabled = true;
+      const srEl = document.getElementById('as-samplerate');
+      if (srEl) srEl.textContent = '再構築中...';
+
+      if (window.audioEngine) {
+        audioEngine.latencyHint = hint;
+        if (audioEngine.isInitialized) {
+          await audioEngine.reinit(audioEngine.sampleRate);
+          await this.applySinkId();
+        }
+      }
+
       this.saveSettings();
+      await this.refreshInfo();
+      sel.disabled = false;
+    });
+
+    // Sample rate change → reinit AudioContext
+    document.getElementById('as-samplerate-select')?.addEventListener('change', async (e) => {
+      const srVal = parseInt(e.target.value, 10);
+      const btn = e.target;
+      btn.disabled = true;
+
+      // Show rebuilding state in Actual Rate
+      const srEl = document.getElementById('as-samplerate');
+      if (srEl) srEl.textContent = '再構築中...';
+
+      if (window.audioEngine && audioEngine.isInitialized) {
+        await audioEngine.reinit(srVal || null);
+        await this.applySinkId();
+      } else {
+        // Not yet initialized — just update the stored value
+        if (window.audioEngine) audioEngine.sampleRate = srVal || 48000;
+      }
+
+      this.saveSettings();
+      await this.refreshInfo();
+      btn.disabled = false;
     });
 
     document.getElementById('as-limiter-toggle')?.addEventListener('click', () => {
@@ -128,13 +183,25 @@ class AudioSettings {
     // Populate output devices
     await this.populateOutputDevices();
 
+    // Restore saved sample rate selection
+    const saved = this.savedSettings;
+    if (saved?.sampleRate) {
+      const sel = document.getElementById('as-samplerate-select');
+      if (sel) sel.value = saved.sampleRate;
+    }
+    // Restore saved latency mode selection
+    if (saved?.latencyHint) {
+      const latSel = document.getElementById('as-latency');
+      if (latSel) latSel.value = saved.latencyHint;
+    }
+
     // Show current audio context info
     if (window.audioEngine && audioEngine.ctx) {
       const ctx = audioEngine.ctx;
       const srEl = document.getElementById('as-samplerate');
       const bsEl = document.getElementById('as-buffersize');
       const chEl = document.getElementById('as-channels');
-      if (srEl) srEl.textContent = ctx.sampleRate + ' Hz';
+      if (srEl) srEl.textContent = ctx.sampleRate.toLocaleString() + ' Hz';
       if (bsEl) bsEl.textContent = ctx.baseLatency ? Math.round(ctx.baseLatency * ctx.sampleRate) + ' samples' : 'N/A';
       if (chEl) chEl.textContent = ctx.destination.channelCount;
     }
@@ -167,17 +234,24 @@ class AudioSettings {
 
   async setOutputDevice(deviceId) {
     this.currentSinkId = deviceId;
-    if (window.audioEngine && audioEngine.ctx && audioEngine.ctx.destination) {
-      try {
-        // setSinkId is available in some browsers (Chrome 110+)
-        if (typeof audioEngine.ctx.setSinkId === 'function') {
-          await audioEngine.ctx.setSinkId(deviceId || '');
-        }
-      } catch (e) {
-        console.warn('setSinkId not supported:', e);
-      }
-    }
+    await this.applySinkId();
     this.saveSettings();
+  }
+
+  // (Re-)apply this.currentSinkId to whichever AudioContext currently exists.
+  // Must be called whenever a new AudioContext is created (initial init,
+  // or reinit() after a sample-rate change) since setSinkId is per-context
+  // and a freshly created context always starts on the OS default device.
+  async applySinkId() {
+    if (!this.currentSinkId) return;
+    if (!window.audioEngine || !audioEngine.ctx || !audioEngine.ctx.destination) return;
+    try {
+      if (typeof audioEngine.ctx.setSinkId === 'function') {
+        await audioEngine.ctx.setSinkId(this.currentSinkId);
+      }
+    } catch (e) {
+      console.warn('setSinkId not supported / failed:', e);
+    }
   }
 
   toggleLimiter() {

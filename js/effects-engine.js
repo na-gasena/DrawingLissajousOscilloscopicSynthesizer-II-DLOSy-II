@@ -122,7 +122,12 @@ class EffectsEngine {
     if (this.audioNodesReady) return;
 
     const ctx = audioEngine.ctx;
-    const BUFSIZE = 256;
+    // ScriptProcessorNode runs its onaudioprocess callback on the MAIN thread,
+    // so the buffer must be refilled before it drains. At 256 samples (~5ms @48k)
+    // any main-thread jank (canvas redraw, GC, layout) underruns it and produces
+    // audible clicks/pops ("ぷつぷつ"). 1024 (~21ms) is far more robust; the extra
+    // latency is unnoticeable for these character/glitch effects.
+    const BUFSIZE = 1024;
 
     // --- Distort (WaveShaper) ---
     this.distortNode = ctx.createWaveShaper();
