@@ -1,6 +1,9 @@
 Doc/
 .agents/
 node_modules
+dist
+.vite
+_site
 1_doc
 2_prj
 3_src

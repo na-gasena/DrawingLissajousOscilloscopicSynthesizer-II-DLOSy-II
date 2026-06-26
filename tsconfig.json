@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+
+    // .js と .ts を共存させる（app.js のみ未変換）
+    "allowJs": true,
+    "checkJs": false,
+
+    // 全 strict フラグを段階的に潰し切り、true に集約済み。
+    "strict": true,
+
+    // Vite(esbuild) がトランスパイルを担うので tsc は型チェック専用
+    "noEmit": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "useDefineForClassFields": true
+  },
+  "include": ["js"],
+  "exclude": ["node_modules", "8_reference", "dist"]
+}
