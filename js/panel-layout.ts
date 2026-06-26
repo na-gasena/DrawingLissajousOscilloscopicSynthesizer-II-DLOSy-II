@@ -5,7 +5,28 @@
  * Layout (sizes + order) is persisted to localStorage.
  */
 
+interface ResizeHandleConfig {
+  varName: string;
+  sign: number;
+  target: 'before' | 'after';
+}
+
+interface LayoutData {
+  sizes: Record<string, string>;
+  order: Record<string, string[]>;
+}
+
+interface PanelGroup {
+  containerId: string;
+  container: HTMLElement;
+  order: string[];
+  resizeHandles: ResizeHandleConfig[];
+}
+
 class PanelLayout {
+  storageKey: string;
+  layout: LayoutData;
+
   constructor() {
     this.storageKey = 'dlosy20_panel_layout';
     this.layout = this.loadLayout();
@@ -26,7 +47,7 @@ class PanelLayout {
 
   // ===== PERSISTENCE =====
 
-  loadLayout() {
+  loadLayout(): LayoutData {
     try {
       const raw = localStorage.getItem(this.storageKey);
       if (raw) return JSON.parse(raw);
@@ -51,7 +72,7 @@ class PanelLayout {
 
   // ===== GROUP SETUP (one resizable/reorderable row of panels) =====
 
-  setupGroup(containerId, defaultPanelIds, resizeHandles) {
+  setupGroup(containerId: string, defaultPanelIds: string[], resizeHandles: ResizeHandleConfig[]) {
     const container = document.getElementById(containerId);
     if (!container) return;
 
@@ -68,11 +89,11 @@ class PanelLayout {
 
   // Rebuilds the container's children as: panel, handle, panel, handle, panel
   // so resize handles always sit between the *current* slot order.
-  renderGroup(group) {
+  renderGroup(group: PanelGroup) {
     const { container, order } = group;
     container.querySelectorAll(':scope > .panel-resize-handle').forEach((h) => h.remove());
 
-    const panels = order.map((id) => document.getElementById(id)).filter(Boolean);
+    const panels = order.map((id) => document.getElementById(id)).filter(Boolean) as HTMLElement[];
     panels.forEach((panel, i) => {
       container.appendChild(panel);
       if (i < panels.length - 1) {
@@ -83,7 +104,7 @@ class PanelLayout {
 
   // ===== COLUMN RESIZE =====
 
-  createColumnHandle(group, afterIndex) {
+  createColumnHandle(group: PanelGroup, afterIndex: number) {
     const config = group.resizeHandles[afterIndex];
     const handle = document.createElement('div');
     handle.className = 'panel-resize-handle';
@@ -97,7 +118,7 @@ class PanelLayout {
     let startX = 0;
     let startWidth = 0;
 
-    const onMove = (e) => {
+    const onMove = (e: MouseEvent) => {
       const delta = config.sign * (e.clientX - startX);
       const newWidth = Math.max(160, Math.min(window.innerWidth * 0.45, startWidth + delta));
       document.documentElement.style.setProperty(config.varName, newWidth + 'px');
@@ -112,7 +133,7 @@ class PanelLayout {
       this.saveLayout();
     };
 
-    handle.addEventListener('mousedown', (e) => {
+    handle.addEventListener('mousedown', (e: MouseEvent) => {
       e.preventDefault();
       const targetEl = getTargetEl();
       if (!targetEl) return;
@@ -142,7 +163,7 @@ class PanelLayout {
     let startY = 0;
     let startHeight = 0;
 
-    const onMove = (e) => {
+    const onMove = (e: MouseEvent) => {
       const delta = startY - e.clientY; // dragging up grows the bottom row
       const maxHeight = window.innerHeight * 0.7;
       const newHeight = Math.max(100, Math.min(maxHeight, startHeight + delta));
@@ -158,7 +179,7 @@ class PanelLayout {
       this.saveLayout();
     };
 
-    handle.addEventListener('mousedown', (e) => {
+    handle.addEventListener('mousedown', (e: MouseEvent) => {
       e.preventDefault();
       startY = e.clientY;
       startHeight = bottom.getBoundingClientRect().height;
@@ -171,8 +192,8 @@ class PanelLayout {
 
   // ===== DRAG-TO-REORDER =====
 
-  makeReorderable(group) {
-    let draggedId = null;
+  makeReorderable(group: PanelGroup) {
+    let draggedId: string | null = null;
 
     group.order.forEach((id) => {
       const el = document.getElementById(id);
@@ -240,5 +261,4 @@ class PanelLayout {
   }
 }
 
-// Global instance
-window.panelLayout = new PanelLayout();
+export const panelLayout = new PanelLayout();

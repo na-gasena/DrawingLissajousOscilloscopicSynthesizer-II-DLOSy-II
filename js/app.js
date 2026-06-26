@@ -3,6 +3,27 @@
  * Initializes all modules and handles global state
  */
 
+// ===== Module imports =====
+// 各モジュールはインスタンスを named export しており、ここで明示的に import する。
+// これにより依存関係が import 文として確定する（旧来の window グローバル方式を廃止）。
+import { audioEngine } from './audio-engine';
+import { adsrEditor } from './adsr-editor';
+import { uiComponents } from './ui-components';
+import { stepSequencer } from './step-sequencer';
+import { midiOut } from './midi-out';
+import { drumMachine } from './drum-machine';
+import { vcoLoop } from './vco-loop';
+import { drawingMode } from './drawing-mode';
+import { unimSearch } from './unim-search';
+import { effectsEngine } from './effects-engine';
+import { cvClock } from './cv-clock';
+import { midiIn } from './midi-in';
+import { presetManager } from './preset-manager';
+import { audioSettings } from './audio-settings';
+import { arpeggiator } from './arpeggiator';
+import { vcoEase } from './vco-ease';
+import { panelLayout } from './panel-layout';
+
 document.addEventListener('DOMContentLoaded', () => {
   console.log('DLOSy20 Web Synthesizer - Initializing...');
 
@@ -25,52 +46,52 @@ document.addEventListener('DOMContentLoaded', () => {
   drawingMode.init();
 
   // Initialize MIDI OUT
-  if (window.midiOut) {
+  if (midiOut) {
     midiOut.init();
   }
 
   // Initialize Unim Search
-  if (window.unimSearch) {
+  if (unimSearch) {
     unimSearch.init();
   }
 
   // Initialize Effects Engine
-  if (window.effectsEngine) {
+  if (effectsEngine) {
     effectsEngine.init();
   }
 
   // Initialize CV Clock Sync
-  if (window.cvClock) {
+  if (cvClock) {
     cvClock.init();
   }
 
   // Initialize MIDI IN
-  if (window.midiIn) {
+  if (midiIn) {
     midiIn.init();
   }
 
   // Initialize Preset Manager (save/load)
-  if (window.presetManager) {
+  if (presetManager) {
     presetManager.init();
   }
 
   // Initialize Audio Settings
-  if (window.audioSettings) {
+  if (audioSettings) {
     audioSettings.init();
   }
 
   // Initialize Arpeggiator
-  if (window.arpeggiator) {
+  if (arpeggiator) {
     arpeggiator.init();
   }
 
   // Initialize VCO Loop Easing
-  if (window.vcoEase) {
+  if (vcoEase) {
     vcoEase.init();
   }
 
   // Initialize Panel Layout (drag-to-resize / drag-to-reorder)
-  if (window.panelLayout) {
+  if (panelLayout) {
     panelLayout.init();
   }
 
@@ -109,14 +130,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Redraw ARP ADSR canvas after tab becomes visible (resize sync)
-    if (window.arpeggiator && target === 'arp') {
+    if (arpeggiator && target === 'arp') {
       requestAnimationFrame(() => {
         if (arpeggiator.drawAdsrCurve) arpeggiator.drawAdsrCurve();
       });
     }
 
     // Redraw Easing canvas after tab becomes visible (resize sync)
-    if (window.vcoEase && target === 'ease') {
+    if (vcoEase && target === 'ease') {
       requestAnimationFrame(() => {
         vcoEase.syncCanvasSize();
         vcoEase.draw();
@@ -152,10 +173,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // Handle 1-8 keys for pattern/slot switching
     if (e.key >= '1' && e.key <= '8') {
       const idx = parseInt(e.key, 10) - 1;
-      if (isVcoActive && window.vcoLoop) {
+      if (isVcoActive && vcoLoop) {
         e.preventDefault();
         vcoLoop.switchPattern(idx);
-      } else if (isDrawingActive && window.drawingMode) {
+      } else if (isDrawingActive && drawingMode) {
         e.preventDefault();
         drawingMode.switchPattern(idx);
       }
@@ -165,11 +186,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.key === 'Tab') {
       e.preventDefault();
 
-      if (isDrawingActive && window.drawingMode) {
+      if (isDrawingActive && drawingMode) {
         // Cycle Drawing Mode slots
         const nextSlot = (drawingMode.activeSlot + 1) % drawingMode.visibleSlotCount;
         drawingMode.switchSlot(nextSlot);
-      } else if (isVcoActive && window.vcoLoop) {
+      } else if (isVcoActive && vcoLoop) {
         // Cycle VCO LOOP parameter tabs
         const params = ['frequency', 'cutoff', 'resonance', 'volume', 'adsr'];
         let activeIdx = params.indexOf(vcoLoop.activeParam);
@@ -217,11 +238,11 @@ document.addEventListener('DOMContentLoaded', () => {
     audioEngine.resume();
     // Re-apply previously selected output device (a fresh AudioContext
     // always starts on the OS default device until setSinkId runs again)
-    if (window.audioSettings) {
+    if (audioSettings) {
       await audioSettings.applySinkId();
     }
     // Initialize effects audio nodes after audio context is ready
-    if (window.effectsEngine) {
+    if (effectsEngine) {
       effectsEngine.initAudioNodes();
     }
     document.removeEventListener('click', initAudio);
@@ -235,7 +256,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Resume AudioContext when tab becomes visible again (browser may suspend it in background)
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && window.audioEngine) {
+    if (!document.hidden && audioEngine) {
       audioEngine.resume();
     }
   });

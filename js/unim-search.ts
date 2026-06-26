@@ -11,8 +11,23 @@
  * No Unicode database is loaded — neighbours are computed arithmetically and
  * unrenderable code points are skipped, so this is lighter than the API.
  */
+import { drawingMode } from './drawing-mode';
+
+interface GlyphItem {
+  cp: number;
+  original: boolean;
+}
 
 class UnimSearch {
+  searchBy: string;
+  font: string;
+  rangeN: number;
+  maxScan: number;
+  searchWord: string;
+  baseCp: number | null;
+  _probe: { ctx: CanvasRenderingContext2D; size: number } | null;
+  lastImportedSlotIndex: number;
+
   constructor() {
     this.searchBy = 'char';   // 'char' | 'code'
     this.font = 'sans-serif'; // rendering font for glyphs
@@ -67,13 +82,13 @@ class UnimSearch {
   bindControls() {
     document.getElementById('unim-search-input')?.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
-        this.searchWord = e.target.value;
+        this.searchWord = (e.target as HTMLInputElement).value;
         this.search();
       }
     });
 
     document.getElementById('unim-search-by-tabs')?.addEventListener('click', (e) => {
-      const btn = e.target.closest('.unim-tab');
+      const btn = (e.target as HTMLElement).closest('.unim-tab') as HTMLElement | null;
       if (!btn || !btn.dataset.by) return;
       document.querySelectorAll('#unim-search-by-tabs .unim-tab').forEach(t => t.classList.remove('active'));
       btn.classList.add('active');
@@ -82,18 +97,19 @@ class UnimSearch {
     });
 
     document.getElementById('unim-range-input')?.addEventListener('change', (e) => {
-      let v = parseInt(e.target.value, 10);
+      const target = e.target as HTMLInputElement;
+      let v = parseInt(target.value, 10);
       if (isNaN(v)) v = 5;
       this.rangeN = Math.max(1, Math.min(40, v));
-      e.target.value = this.rangeN;
+      target.value = String(this.rangeN);
       if (this.baseCp !== null) this.render();
     });
 
-    document.querySelectorAll('.unim-font-tab').forEach(btn => {
+    document.querySelectorAll<HTMLElement>('.unim-font-tab').forEach(btn => {
       btn.addEventListener('click', () => {
         document.querySelectorAll('.unim-font-tab').forEach(t => t.classList.remove('active'));
         btn.classList.add('active');
-        this.font = btn.dataset.font;
+        this.font = btn.dataset.font ?? this.font;
         if (this.baseCp !== null) this.render();
       });
     });
@@ -121,7 +137,7 @@ class UnimSearch {
       this.setStatus('入力なし');
       return;
     }
-    this.baseCp = base;
+    this.baseCp = base ?? null;
     this.render();
   }
 
@@ -132,16 +148,16 @@ class UnimSearch {
       const size = 24;
       const c = document.createElement('canvas');
       c.width = size; c.height = size;
-      const ctx = c.getContext('2d', { willReadFrequently: true });
+      const ctx = c.getContext("2d", { willReadFrequently: true })!;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       this._probe = { ctx, size };
     }
-    return this._probe;
+    return this._probe!;
   }
 
   // Is this code point something the current font can actually draw?
-  isRenderable(cp) {
+  isRenderable(cp: number) {
     if (cp < 0x20) return false;                 // C0 controls
     if (cp >= 0x7F && cp <= 0x9F) return false;  // DEL + C1 controls
     if (cp >= 0xD800 && cp <= 0xDFFF) return false; // surrogates
@@ -161,18 +177,19 @@ class UnimSearch {
   }
 
   // Build the list of code points to show: base + N renderable neighbours each side
-  collectNeighbours() {
+  collectNeighbours(): GlyphItem[] {
     const base = this.baseCp;
-    const list = [];
+    if (base === null) return [];
+    const list: GlyphItem[] = [];
 
     // before (scan downward)
-    const before = [];
+    const before: number[] = [];
     for (let d = 1, cp = base - 1; before.length < this.rangeN && d <= this.maxScan; d++, cp--) {
       if (cp < 0) break;
       if (this.isRenderable(cp)) before.unshift(cp);
     }
     // after (scan upward)
-    const after = [];
+    const after: number[] = [];
     for (let d = 1, cp = base + 1; after.length < this.rangeN && d <= this.maxScan; d++, cp++) {
       if (cp > 0x10FFFF) break;
       if (this.isRenderable(cp)) after.push(cp);
@@ -192,7 +209,7 @@ class UnimSearch {
     this.setStatus(`${list.length} 件 · U+${this.baseCp.toString(16).toUpperCase()}`);
   }
 
-  renderResults(list) {
+  renderResults(list: GlyphItem[]) {
     const grid = document.getElementById('unim-results-grid');
     if (!grid) return;
     grid.innerHTML = '';
@@ -214,9 +231,9 @@ class UnimSearch {
         e.preventDefault();
         this.searchWord = ch;
         this.searchBy = 'char';
-        const input = document.getElementById('unim-search-input');
+        const input = document.getElementById('unim-search-input') as HTMLInputElement | null;
         if (input) input.value = ch;
-        document.querySelectorAll('#unim-search-by-tabs .unim-tab').forEach(t =>
+        document.querySelectorAll<HTMLElement>('#unim-search-by-tabs .unim-tab').forEach(t =>
           t.classList.toggle('active', t.dataset.by === 'char'));
         this.search();
       });
@@ -226,12 +243,12 @@ class UnimSearch {
   }
 
   // Small filled-glyph preview thumbnail
-  makeThumb(ch) {
+  makeThumb(ch: string) {
     const px = 48;
     const c = document.createElement('canvas');
     c.width = px; c.height = px;
     c.className = 'unim-glyph-canvas';
-    const ctx = c.getContext('2d');
+    const ctx = c.getContext("2d")!;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     let fontPx = Math.floor(px * 0.7);
@@ -247,7 +264,7 @@ class UnimSearch {
     return c;
   }
 
-  formatCp(cp) {
+  formatCp(cp: number) {
     return 'U+' + cp.toString(16).toUpperCase().padStart(4, '0');
   }
 
@@ -256,14 +273,14 @@ class UnimSearch {
     if (grid) grid.innerHTML = '';
   }
 
-  setStatus(text) {
+  setStatus(text: string) {
     const el = document.getElementById('unim-status');
     if (el) el.textContent = text;
   }
 
   // Import a character into the Drawing Mode active slot (with auto-advance)
-  applyGlyphChar(ch, cp) {
-    if (!ch || !window.drawingMode) return;
+  applyGlyphChar(ch: string, cp: number) {
+    if (!ch || !drawingMode) return;
 
     let targetSlot = drawingMode.activeSlot;
     if (this.lastImportedSlotIndex === targetSlot) {
@@ -286,5 +303,4 @@ class UnimSearch {
   }
 }
 
-// Global instance
-window.unimSearch = new UnimSearch();
+export const unimSearch = new UnimSearch();

@@ -14,8 +14,34 @@
  * restores a preset to its original shape (CUSTOM resets to a neutral curve).
  * CUSTOM is your own slot — it is never overwritten by selecting a preset.
  */
+import { vcoLoop } from './vco-loop';
+import { presetManager } from './preset-manager';
+
+interface EasePoint {
+  x: number;
+  y: number;
+}
+
+interface EasePresetDef {
+  id: string;
+  label: string;
+  jp: string;
+}
 
 class VCOEase {
+  preset: string;
+  amount: number;
+  editSegments: number;
+  functions: Record<string, (t: number) => number>;
+  edited: Record<string, EasePoint[]>;
+  presets: EasePresetDef[];
+  draggingPoint: number | null;
+  _initialized: boolean = false;
+  canvas: HTMLCanvasElement | null = null;
+  ctx2d: CanvasRenderingContext2D | null = null;
+  _resizeObserver: ResizeObserver | null = null;
+  _rafId: number = 0;
+
   constructor() {
     this.preset = 'linear';    // current mode id (a preset id, or 'custom')
     this.amount = 1.0;         // 0..1 blend between linear and the eased curve
@@ -60,7 +86,7 @@ class VCOEase {
   // ===== EVALUATION =====
 
   // Raw eased shape (no amount blend): edited points if present, else analytic.
-  rawEase(t) {
+  rawEase(t: number) {
     const c = Math.max(0, Math.min(1, t));
     const pts = this.edited[this.preset];
     if (pts) return this.evalPoints(pts, c);
@@ -69,14 +95,14 @@ class VCOEase {
   }
 
   // Effective mapping used by playback: blends the raw shape toward linear.
-  apply(t) {
+  apply(t: number) {
     const c = Math.max(0, Math.min(1, t));
     const eased = this.rawEase(c);
     return c + (eased - c) * this.amount;
   }
 
   // Linear interpolation over a control-point array.
-  evalPoints(pts, t) {
+  evalPoints(pts: EasePoint[], t: number) {
     if (!pts || pts.length === 0) return t;
     if (pts.length === 1) return pts[0].y;
     let left = pts[0];
@@ -99,10 +125,10 @@ class VCOEase {
   }
 
   // Sample an analytic preset into editable control points (endpoints locked).
-  samplePoints(id) {
+  samplePoints(id: string): EasePoint[] {
     const fn = this.functions[id] || this.functions.linear;
     const n = this.editSegments;
-    const pts = [];
+    const pts: EasePoint[] = [];
     for (let i = 0; i <= n; i++) {
       const x = i / n;
       pts.push({ x, y: Math.max(0, Math.min(1, fn(x))) });
@@ -161,7 +187,7 @@ class VCOEase {
       btn.dataset.preset = p.id;
       btn.innerHTML = `<span class="ease-preset-label">${p.label}</span><span class="ease-preset-jp">${p.jp}</span>`;
       btn.addEventListener('click', () => this.setMode(p.id));
-      presetRow.appendChild(btn);
+      presetRow?.appendChild(btn);
     });
     // CUSTOM (own slot) button
     const customBtn = document.createElement('button');
@@ -169,35 +195,36 @@ class VCOEase {
     customBtn.dataset.preset = 'custom';
     customBtn.innerHTML = `<span class="ease-preset-label">✎ CUSTOM</span><span class="ease-preset-jp">自作</span>`;
     customBtn.addEventListener('click', () => this.setMode('custom'));
-    presetRow.appendChild(customBtn);
+    presetRow?.appendChild(customBtn);
 
     // Amount slider
     container.querySelector('#ease-amount')?.addEventListener('input', (e) => {
-      this.amount = parseInt(e.target.value, 10) / 100;
+      const target = e.target as HTMLInputElement;
+      this.amount = parseInt(target.value, 10) / 100;
       const valEl = document.getElementById('ease-amount-val');
-      if (valEl) valEl.textContent = e.target.value + '%';
+      if (valEl) valEl.textContent = target.value + '%';
       this.draw();
-      if (window.presetManager) presetManager.autoSave?.();
+      if (presetManager) presetManager.autoSave?.();
     });
 
     // Reset current mode
     container.querySelector('#ease-reset')?.addEventListener('click', () => this.resetCurrent());
 
     // Canvas + editing
-    this.canvas = container.querySelector('#ease-canvas');
-    this.ctx2d = this.canvas ? this.canvas.getContext('2d') : null;
+    this.canvas = container.querySelector('#ease-canvas') as HTMLCanvasElement | null;
+    this.ctx2d = this.canvas ? this.canvas!.getContext('2d') : null;
     if (this.canvas) {
-      this.canvas.classList.add('editable');
-      this.canvas.addEventListener('mousedown', (e) => this.onCanvasDown(e));
-      this.canvas.addEventListener('mousemove', (e) => this.onCanvasMove(e));
+      this.canvas!.classList.add('editable');
+      this.canvas!.addEventListener('mousedown', (e) => this.onCanvasDown(e));
+      this.canvas!.addEventListener('mousemove', (e) => this.onCanvasMove(e));
       window.addEventListener('mouseup', () => this.onCanvasUp());
-      this.canvas.addEventListener('dblclick', (e) => this.onCanvasDblClick(e));
+      this.canvas!.addEventListener('dblclick', (e) => this.onCanvasDblClick(e));
       if (window.ResizeObserver) {
         this._resizeObserver = new ResizeObserver(() => {
           this.syncCanvasSize();
           this.draw();
         });
-        this._resizeObserver.observe(this.canvas.parentElement);
+        this._resizeObserver.observe(this.canvas!.parentElement!);
       }
     }
 
@@ -207,13 +234,13 @@ class VCOEase {
     this.draw();
   }
 
-  setMode(id) {
+  setMode(id: string) {
     if (id !== 'custom' && !this.functions[id]) return;
     this.preset = id;
     this.updateButtons();
     this.updateHint();
     this.draw();
-    if (window.presetManager) presetManager.autoSave?.();
+    if (presetManager) presetManager.autoSave?.();
   }
 
   // Restore the current mode: presets revert to their analytic shape; CUSTOM
@@ -228,12 +255,12 @@ class VCOEase {
     this.updateButtons();
     this.updateHint();
     this.draw();
-    if (window.presetManager) presetManager.autoSave?.();
+    if (presetManager) presetManager.autoSave?.();
   }
 
   updateButtons() {
-    document.querySelectorAll('.ease-preset-btn').forEach((b) => {
-      const id = b.dataset.preset;
+    document.querySelectorAll<HTMLElement>('.ease-preset-btn').forEach((b) => {
+      const id = b.dataset.preset ?? "";
       b.classList.toggle('active', id === this.preset);
       // Mark presets that have been edited from their default (not custom).
       b.classList.toggle('modified', id !== 'custom' && !!this.edited[id]);
@@ -250,21 +277,21 @@ class VCOEase {
 
   syncCanvasSize() {
     if (!this.canvas) return;
-    const rect = this.canvas.getBoundingClientRect();
+    const rect = this.canvas!.getBoundingClientRect();
     const w = Math.max(Math.round(rect.width), 200);
     const h = Math.max(Math.round(rect.height), 120);
-    if (this.canvas.width !== w || this.canvas.height !== h) {
-      this.canvas.width = w;
-      this.canvas.height = h;
+    if (this.canvas!.width !== w || this.canvas!.height !== h) {
+      this.canvas!.width = w;
+      this.canvas!.height = h;
     }
   }
 
   // ===== CANVAS EDITING (all modes) =====
 
-  getCoords(e) {
-    const rect = this.canvas.getBoundingClientRect();
-    const scaleX = this.canvas.width / rect.width;
-    const scaleY = this.canvas.height / rect.height;
+  getCoords(e: MouseEvent) {
+    const rect = this.canvas!.getBoundingClientRect();
+    const scaleX = this.canvas!.width / rect.width;
+    const scaleY = this.canvas!.height / rect.height;
     const pad = 16;
     const padCSSx = pad / scaleX;
     const padCSSy = pad / scaleY;
@@ -275,7 +302,7 @@ class VCOEase {
     return { x, y };
   }
 
-  findPoint(pts, coords, threshold = 0.045) {
+  findPoint(pts: EasePoint[], coords: EasePoint, threshold = 0.045) {
     for (let i = 0; i < pts.length; i++) {
       const dx = pts[i].x - coords.x;
       const dy = pts[i].y - coords.y;
@@ -284,14 +311,14 @@ class VCOEase {
     return -1;
   }
 
-  findPointByX(pts, x, threshold) {
+  findPointByX(pts: EasePoint[], x: number, threshold: number) {
     for (let i = 0; i < pts.length; i++) {
       if (Math.abs(pts[i].x - x) < threshold) return i;
     }
     return -1;
   }
 
-  onCanvasDown(e) {
+  onCanvasDown(e: MouseEvent) {
     const coords = this.getCoords(e);
     const pts = this.materialize(); // any mode becomes editable on first touch
     const wasEdited = this.edited[this.preset] === pts; // always true after materialize
@@ -323,7 +350,7 @@ class VCOEase {
     this.afterStructureChange();
   }
 
-  onCanvasMove(e) {
+  onCanvasMove(e: MouseEvent) {
     if (this.draggingPoint === null) return;
     const pts = this.edited[this.preset];
     const i = this.draggingPoint;
@@ -339,11 +366,11 @@ class VCOEase {
   onCanvasUp() {
     if (this.draggingPoint !== null) {
       this.draggingPoint = null;
-      if (window.presetManager) presetManager.autoSave?.();
+      if (presetManager) presetManager.autoSave?.();
     }
   }
 
-  onCanvasDblClick(e) {
+  onCanvasDblClick(e: MouseEvent) {
     const pts = this.edited[this.preset];
     if (!pts) return;
     const coords = this.getCoords(e);
@@ -359,7 +386,7 @@ class VCOEase {
     this.updateButtons();
     this.updateHint();
     this.draw();
-    if (window.presetManager) presetManager.autoSave?.();
+    if (presetManager) presetManager.autoSave?.();
   }
 
   // ===== VISUALIZATION =====
@@ -371,7 +398,7 @@ class VCOEase {
     const loop = () => {
       const tab = document.getElementById('center-tab-ease');
       const active = tab && tab.classList.contains('active');
-      const playing = window.vcoLoop && vcoLoop.isOscRunning;
+      const playing = vcoLoop && vcoLoop.isOscRunning;
       if (active && playing) {
         this.syncCanvasSize();
         this.draw();
@@ -383,14 +410,14 @@ class VCOEase {
 
   draw() {
     if (!this.ctx2d || !this.canvas) return;
-    const ctx = this.ctx2d;
-    const w = this.canvas.width;
-    const h = this.canvas.height;
+    const ctx = this.ctx2d!;
+    const w = this.canvas!.width;
+    const h = this.canvas!.height;
     const pad = 16;
     const iw = w - pad * 2;
     const ih = h - pad * 2;
-    const X = (t) => pad + t * iw;
-    const Y = (v) => pad + (1 - v) * ih;
+    const X = (t: number) => pad + t * iw;
+    const Y = (v: number) => pad + (1 - v) * ih;
 
     ctx.fillStyle = '#1c1c20';
     ctx.fillRect(0, 0, w, h);
@@ -452,7 +479,7 @@ class VCOEase {
     });
 
     // Live playhead dot (CONT: interpolated; STEP: discrete)
-    if (window.vcoLoop && vcoLoop.isOscRunning) {
+    if (vcoLoop && vcoLoop.isOscRunning) {
       const linearPhase = this._currentLinearPhase();
       const easedPhase = this.apply(linearPhase);
       const dotX = X(linearPhase);
@@ -484,7 +511,7 @@ class VCOEase {
   }
 
   _currentLinearPhase() {
-    if (!window.vcoLoop) return 0;
+    if (!vcoLoop) return 0;
     const total = vcoLoop.lastTotalSteps || 16;
     if (vcoLoop.continuousMode) {
       const elapsed = performance.now() - vcoLoop.stepStartTime;
@@ -497,17 +524,17 @@ class VCOEase {
   // ===== PRESET PERSISTENCE HOOKS =====
 
   getState() {
-    const edited = {};
+    const edited: Record<string, EasePoint[]> = {};
     Object.entries(this.edited).forEach(([k, pts]) => {
       edited[k] = pts.map((p) => ({ x: p.x, y: p.y }));
     });
     return { preset: this.preset, amount: this.amount, edited };
   }
 
-  setState(state) {
+  setState(state: any) {
     if (!state) return;
     if (state.edited && typeof state.edited === 'object') {
-      const restored = {};
+      const restored: Record<string, EasePoint[]> = {};
       Object.entries(state.edited).forEach(([k, pts]) => {
         if (Array.isArray(pts)) restored[k] = pts.map((p) => ({ x: p.x, y: p.y }));
       });
@@ -516,14 +543,14 @@ class VCOEase {
       this.edited = restored;
     } else if (state.customPoints) {
       // Backward-compat with the earlier single-custom format
-      this.edited.custom = state.customPoints.map((p) => ({ x: p.x, y: p.y }));
+      this.edited.custom = state.customPoints.map((p: any) => ({ x: p.x, y: p.y }));
     }
     if (state.preset && (state.preset === 'custom' || this.functions[state.preset])) this.preset = state.preset;
     if (typeof state.amount === 'number') this.amount = state.amount;
 
-    const slider = document.getElementById('ease-amount');
+    const slider = document.getElementById('ease-amount') as HTMLInputElement | null;
     const valEl = document.getElementById('ease-amount-val');
-    if (slider) slider.value = Math.round(this.amount * 100);
+    if (slider) slider.value = String(Math.round(this.amount * 100));
     if (valEl) valEl.textContent = Math.round(this.amount * 100) + '%';
     this.updateButtons();
     this.updateHint();
@@ -531,14 +558,8 @@ class VCOEase {
   }
 }
 
-// Global instance
-window.vcoEase = new VCOEase();
+export const vcoEase = new VCOEase();
 
-// Self-init fallback: app.js also calls vcoEase.init(), but this guarantees the
-// tab UI is built even if a stale/cached app.js doesn't make that call.
-// init() is idempotent, so the duplicate call is a harmless no-op.
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => window.vcoEase.init());
-} else {
-  window.vcoEase.init();
-}
+// 初期化は app.js が DOMContentLoaded で vcoEase.init() を呼ぶ。
+// （旧コードはモジュール評価時に init() を eager 実行していたが、それが
+//  循環 import 中に未初期化の vcoLoop へ触れて TDZ エラーを起こすため削除。）
