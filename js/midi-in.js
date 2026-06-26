@@ -8,6 +8,20 @@ class MidiIn {
   constructor() {
     this.enabled = false;
 
+    // Dedicated persistence — controller mapping is a HARDWARE setup concern,
+    // kept fully separate from the musical sound-preset blob so loading a
+    // preset never clobbers it, and it survives every reload.
+    this.configKey = 'dlosy20_midi_config';
+
+    // Reverse-learn state: capture a CC first, then click an on-screen control.
+    this.reverseLearnDev = null; // '1' | '2' | null
+    this.reverseCC = null;
+    this._reverseClickHandler = null;
+
+    // Named mapping snapshots
+    this.banks = [];      // [{ name, ccMap, ccMap2 }]
+    this.activeBank = -1;
+
     // ===== Device 1 =====
     this.selectedInput = null;
     this.mode = 'synth'; // 'synth' | 'drums' | 'arp'
@@ -79,6 +93,10 @@ class MidiIn {
 
   async init() {
     this.buildUI();
+    this.loadConfig();     // restore independent MIDI config (or migrate from old preset)
+    this.renderMaps();
+    this.refreshBankSelect();
+    this.syncUIFromState();
     this.connectMIDI();
   }
 
@@ -288,7 +306,12 @@ class MidiIn {
   // ===== CC HANDLING (IN1) =====
 
   onCC(ccNumber, value) {
-    // CC Learn IN1
+    // Reverse Learn IN1: capture the CC, then wait for a control click
+    if (this.reverseLearnDev === '1' && this.reverseCC === null) {
+      this._captureReverseCC(ccNumber);
+      return;
+    }
+    // CC Learn IN1 (forward)
     if (this.ccLearnActive && this.ccLearnTarget) {
       this.ccMap[ccNumber] = this.ccLearnTarget;
       this.ccLearnActive = false;
@@ -297,7 +320,8 @@ class MidiIn {
       document.getElementById('midi-in-learn')?.classList.remove('active');
       const learnSelect = document.getElementById('midi-in-learn-target');
       if (learnSelect) learnSelect.value = '';
-      if (window.presetManager) presetManager.autoSave();
+      this.renderMaps();
+      this.saveConfig();
       return;
     }
 
@@ -307,7 +331,12 @@ class MidiIn {
   // ===== CC HANDLING (IN2) =====
 
   onCC2(ccNumber, value) {
-    // CC Learn IN2
+    // Reverse Learn IN2: capture the CC, then wait for a control click
+    if (this.reverseLearnDev === '2' && this.reverseCC === null) {
+      this._captureReverseCC(ccNumber);
+      return;
+    }
+    // CC Learn IN2 (forward)
     if (this.ccLearnActive2 && this.ccLearnTarget2) {
       this.ccMap2[ccNumber] = this.ccLearnTarget2;
       this.ccLearnActive2 = false;
@@ -316,7 +345,8 @@ class MidiIn {
       document.getElementById('midi-in-learn')?.classList.remove('active');
       const learnSelect = document.getElementById('midi-in-learn-target');
       if (learnSelect) learnSelect.value = '';
-      if (window.presetManager) presetManager.autoSave();
+      this.renderMaps();
+      this.saveConfig();
       return;
     }
 
@@ -412,6 +442,7 @@ class MidiIn {
           <select id="midi-in-select" class="midi-select">
             <option value="">-- No Device --</option>
           </select>
+          <button id="midi-in-refresh" class="small-btn" title="Refresh MIDI device list">⟳</button>
         </div>
         <div class="midi-in-row">
           <span class="midi-label">MOD1</span>
@@ -433,17 +464,37 @@ class MidiIn {
           <div id="midi-in-indicator2" class="midi-indicator"></div>
         </div>
 
-        <div class="midi-in-row">
-          <select id="midi-in-learn-dev" class="midi-select" title="CC Learn device">
-            <option value="1">IN1 CC Learn</option>
-            <option value="2">IN2 CC Learn</option>
-          </select>
+        <!-- ===== CC MAPPING ===== -->
+        <div class="midi-map-section">
+          <div class="midi-in-row midi-learn-row">
+            <select id="midi-in-learn-dev" class="midi-select" title="Learn target device">
+              <option value="1">IN1</option>
+              <option value="2">IN2</option>
+            </select>
+            <select id="midi-in-learn-target" class="midi-select" title="CC Learn target">
+              <option value="">Target...</option>
+            </select>
+            <button id="midi-in-learn" class="small-btn" title="Pick a target, then move a CC">LEARN</button>
+          </div>
+          <div class="midi-in-row midi-learn-row">
+            <button id="midi-in-rlearn" class="small-btn midi-rlearn-btn" title="Move a CC, then click any on-screen control">⤵ REVERSE LEARN</button>
+          </div>
+
+          <div id="midi-map-table1" class="midi-map-table"></div>
+          <div id="midi-map-table2" class="midi-map-table"></div>
         </div>
-        <div class="midi-in-row">
-          <select id="midi-in-learn-target" class="midi-select" title="CC Learn target">
-            <option value="">CC Learn...</option>
-          </select>
-          <button id="midi-in-learn" class="small-btn">LEARN</button>
+
+        <!-- ===== BANKS / IMPORT-EXPORT ===== -->
+        <div class="midi-bank-section">
+          <div class="midi-in-row midi-bank-row">
+            <select id="midi-bank-select" class="midi-select" title="Mapping bank"></select>
+            <button id="midi-bank-save" class="small-btn" title="Save current mapping as a bank">＋BANK</button>
+            <button id="midi-bank-del" class="small-btn" title="Delete selected bank">DEL</button>
+          </div>
+          <div class="midi-in-row midi-bank-row">
+            <button id="midi-cfg-export" class="small-btn" title="Export MIDI config to file">EXPORT</button>
+            <button id="midi-cfg-import" class="small-btn" title="Import MIDI config from file">IMPORT</button>
+          </div>
         </div>
       </div>
     `;
@@ -471,6 +522,19 @@ class MidiIn {
           this.populateInputs();
         }
       }
+      this.saveConfig();
+    });
+
+    // Refresh button — re-scan MIDI devices
+    document.getElementById('midi-in-refresh')?.addEventListener('click', async () => {
+      const btn = document.getElementById('midi-in-refresh');
+      if (btn) btn.textContent = '…';
+      if (!this.midiAccess) {
+        await this.connectMIDI();
+      } else {
+        this.populateInputs();
+      }
+      if (btn) btn.textContent = '⟳';
     });
 
     // Input device 1 select
@@ -487,6 +551,7 @@ class MidiIn {
       } else {
         this.selectedInput = null;
       }
+      this.saveConfig();
     });
 
     // Input device 2 select
@@ -503,6 +568,7 @@ class MidiIn {
       } else {
         this.selectedInput2 = null;
       }
+      this.saveConfig();
     });
 
     // Mode buttons IN1
@@ -513,12 +579,12 @@ class MidiIn {
     document.getElementById('midi-in-mode2-synth')?.addEventListener('click', () => this.setMode2('synth'));
     document.getElementById('midi-in-mode2-arp')?.addEventListener('click',   () => this.setMode2('arp'));
 
-    // CC Learn
+    // CC Learn (forward)
     document.getElementById('midi-in-learn')?.addEventListener('click', () => {
       const learnSelect = document.getElementById('midi-in-learn-target');
       const targetName = learnSelect ? learnSelect.value : '';
       if (!targetName) {
-        this.updateStatus('Select target first');
+        this.updateStatus('ターゲットを選択');
         return;
       }
       const targetDef = this.ccLearnTargets.find(t => t.target === targetName);
@@ -528,6 +594,7 @@ class MidiIn {
       const dev = devSelect ? devSelect.value : '1';
       const entry = { target: targetDef.target, min: targetDef.min, max: targetDef.max };
 
+      this.cancelReverseLearn();
       if (dev === '2') {
         this.ccLearnTarget2 = entry;
         this.ccLearnActive2 = true;
@@ -539,20 +606,40 @@ class MidiIn {
       }
 
       document.getElementById('midi-in-learn')?.classList.add('active');
-      this.updateStatus('CC Learn IN' + dev + ': move ' + targetDef.label + '...');
+      this.updateStatus('LEARN IN' + dev + ': ' + targetDef.label + ' — CCを動かす');
     });
+
+    // Reverse Learn
+    document.getElementById('midi-in-rlearn')?.addEventListener('click', () => {
+      const devSelect = document.getElementById('midi-in-learn-dev');
+      const dev = devSelect ? devSelect.value : '1';
+      this.armReverseLearn(dev);
+    });
+
+    // Banks
+    document.getElementById('midi-bank-select')?.addEventListener('change', (e) => {
+      this.loadBank(parseInt(e.target.value, 10));
+    });
+    document.getElementById('midi-bank-save')?.addEventListener('click', () => this.saveBank());
+    document.getElementById('midi-bank-del')?.addEventListener('click', () => this.deleteBank());
+
+    // Export / Import config
+    document.getElementById('midi-cfg-export')?.addEventListener('click', () => this.exportConfig());
+    document.getElementById('midi-cfg-import')?.addEventListener('click', () => this.importConfig());
   }
 
   setMode(mode) {
     this.mode = mode;
     document.getElementById('midi-in-mode-synth')?.classList.toggle('active', mode === 'synth');
     document.getElementById('midi-in-mode-arp')?.classList.toggle('active',   mode === 'arp');
+    this.saveConfig();
   }
 
   setMode2(mode) {
     this.mode2 = mode;
     document.getElementById('midi-in-mode2-synth')?.classList.toggle('active', mode === 'synth');
     document.getElementById('midi-in-mode2-arp')?.classList.toggle('active',   mode === 'arp');
+    this.saveConfig();
   }
 
   populateInputs() {
@@ -615,6 +702,348 @@ class MidiIn {
   updateStatus(text) {
     const el = document.getElementById('midi-in-status');
     if (el) el.textContent = text;
+  }
+
+  // ===== INDEPENDENT PERSISTENCE =====
+  // MIDI controller config lives in its own localStorage key, separate from
+  // the musical sound-preset blob, and is saved on every change.
+
+  saveConfig() {
+    try {
+      const cfg = {
+        version: 1,
+        enabled: this.enabled,
+        in1: {
+          deviceName: this.selectedInput ? this.selectedInput.name : null,
+          mode: this.mode,
+          ccMap: this.ccMap,
+        },
+        in2: {
+          deviceName: this.selectedInput2 ? this.selectedInput2.name : null,
+          mode: this.mode2,
+          ccMap: this.ccMap2,
+        },
+        banks: this.banks,
+        activeBank: this.activeBank,
+      };
+      localStorage.setItem(this.configKey, JSON.stringify(cfg));
+    } catch (e) {
+      console.warn('MIDI saveConfig failed:', e);
+    }
+  }
+
+  loadConfig() {
+    let cfg = null;
+    try {
+      const raw = localStorage.getItem(this.configKey);
+      if (raw) cfg = JSON.parse(raw);
+    } catch (e) {}
+
+    // One-time migration: if no dedicated config exists yet, pull any mapping
+    // that was previously stored inside the old sound-preset blob so existing
+    // users don't lose their setup.
+    if (!cfg) {
+      cfg = this._migrateFromPreset();
+    }
+    if (!cfg) return;
+
+    this.applyConfig(cfg);
+    // Persist (covers the migration case)
+    this.saveConfig();
+  }
+
+  applyConfig(cfg) {
+    if (typeof cfg.enabled === 'boolean') this.enabled = cfg.enabled;
+    if (cfg.in1) {
+      if (cfg.in1.ccMap) this.ccMap = cfg.in1.ccMap;
+      if (cfg.in1.mode) this.mode = cfg.in1.mode;
+      this._pendingDeviceName = cfg.in1.deviceName || null;
+    }
+    if (cfg.in2) {
+      if (cfg.in2.ccMap) this.ccMap2 = cfg.in2.ccMap;
+      if (cfg.in2.mode) this.mode2 = cfg.in2.mode;
+      this._pendingDeviceName2 = cfg.in2.deviceName || null;
+    }
+    if (Array.isArray(cfg.banks)) this.banks = cfg.banks;
+    if (typeof cfg.activeBank === 'number') this.activeBank = cfg.activeBank;
+  }
+
+  _migrateFromPreset() {
+    try {
+      const raw = localStorage.getItem('DLOSy20_preset');
+      if (!raw) return null;
+      const preset = JSON.parse(raw);
+      const m = preset && preset.midiIn;
+      if (!m) return null;
+      console.log('MIDI: migrating mapping from old preset blob');
+      return {
+        version: 1,
+        enabled: !!m.enabled,
+        in1: { deviceName: m.deviceName || null,  mode: m.mode || 'synth',  ccMap: m.ccMap || {} },
+        in2: { deviceName: m.deviceName2 || null, mode: m.mode2 || 'synth', ccMap: m.ccMap2 || {} },
+        banks: [],
+        activeBank: -1,
+      };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // Reflect loaded state onto the DOM (called once after loadConfig)
+  syncUIFromState() {
+    document.getElementById('midi-in-toggle')?.classList.toggle('midi-active', this.enabled);
+    this.updateStatus(this.enabled ? 'ON' : 'Off');
+    document.getElementById('midi-in-mode-synth')?.classList.toggle('active', this.mode === 'synth');
+    document.getElementById('midi-in-mode-arp')?.classList.toggle('active',   this.mode === 'arp');
+    document.getElementById('midi-in-mode2-synth')?.classList.toggle('active', this.mode2 === 'synth');
+    document.getElementById('midi-in-mode2-arp')?.classList.toggle('active',   this.mode2 === 'arp');
+  }
+
+  // ===== MAPPING TABLE UI =====
+
+  labelFor(target) {
+    const def = this.ccLearnTargets.find(t => t.target === target);
+    return def ? def.label : target;
+  }
+
+  renderMaps() {
+    this._renderMapTable('midi-map-table1', this.ccMap, '1');
+    this._renderMapTable('midi-map-table2', this.ccMap2, '2');
+  }
+
+  _renderMapTable(elId, map, dev) {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    const entries = Object.entries(map)
+      .map(([cc, m]) => [parseInt(cc, 10), m])
+      .sort((a, b) => a[0] - b[0]);
+
+    let rows = '';
+    if (entries.length === 0) {
+      rows = `<div class="midi-map-empty">マッピングなし</div>`;
+    } else {
+      rows = entries.map(([cc, m]) => `
+        <div class="midi-map-row">
+          <span class="mm-cc">CC${cc}</span>
+          <span class="mm-tgt" title="${this.labelFor(m.target)}">${this.labelFor(m.target)}</span>
+          <span class="mm-range">${this._fmt(m.min)}–${this._fmt(m.max)}</span>
+          <button class="mm-del" data-dev="${dev}" data-cc="${cc}" title="削除">×</button>
+        </div>`).join('');
+    }
+
+    el.innerHTML = `
+      <div class="midi-map-title">IN${dev} MAP <span class="mm-count">${entries.length}</span></div>
+      ${rows}`;
+
+    el.querySelectorAll('.mm-del').forEach(btn => {
+      btn.addEventListener('click', () => {
+        this.deleteMapping(btn.dataset.dev, parseInt(btn.dataset.cc, 10));
+      });
+    });
+  }
+
+  _fmt(v) {
+    if (v === undefined || v === null) return '?';
+    return (Math.abs(v) < 1 && v !== 0) ? v.toFixed(2).replace(/0+$/, '').replace(/\.$/, '') : String(Math.round(v));
+  }
+
+  deleteMapping(dev, cc) {
+    const map = dev === '2' ? this.ccMap2 : this.ccMap;
+    delete map[cc];
+    this.renderMaps();
+    this.saveConfig();
+    this.updateStatus('CC' + cc + ' (IN' + dev + ') 削除');
+  }
+
+  // ===== REVERSE LEARN =====
+  // Move a CC first; it gets captured, then click any on-screen control that
+  // carries data-midi-target or data-param to bind it.
+
+  armReverseLearn(dev) {
+    this.cancelReverseLearn();
+    this.ccLearnActive = false;
+    this.ccLearnActive2 = false;
+    document.getElementById('midi-in-learn')?.classList.remove('active');
+
+    this.reverseLearnDev = dev;
+    this.reverseCC = null;
+    document.getElementById('midi-in-rlearn')?.classList.add('active');
+    document.body.classList.add('midi-reverse-arming');
+    this.updateStatus('REVERSE IN' + dev + ': CCを動かす…');
+  }
+
+  _captureReverseCC(ccNumber) {
+    this.reverseCC = ccNumber;
+    document.body.classList.remove('midi-reverse-arming');
+    document.body.classList.add('midi-reverse-pick');
+    this.updateStatus('CC' + ccNumber + ' 検出 — 対象をクリック');
+
+    // One-shot capture-phase click handler to grab the target control
+    this._reverseClickHandler = (e) => {
+      // Ignore clicks inside the MIDI panel itself (e.g. cancel)
+      if (e.target.closest('#midi-in-panel')) {
+        this.cancelReverseLearn();
+        this.updateStatus('REVERSE 中止');
+        return;
+      }
+      const resolved = this.resolveTargetFromEl(e.target);
+      if (!resolved) {
+        // Not a mappable control — keep waiting
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+
+      const map = this.reverseLearnDev === '2' ? this.ccMap2 : this.ccMap;
+      map[this.reverseCC] = { target: resolved.target, min: resolved.min, max: resolved.max };
+      const dev = this.reverseLearnDev;
+      const cc = this.reverseCC;
+      this.cancelReverseLearn();
+      this.renderMaps();
+      this.saveConfig();
+      this.updateStatus('CC' + cc + ' → ' + resolved.label + ' (IN' + dev + ')');
+    };
+    document.addEventListener('click', this._reverseClickHandler, true);
+  }
+
+  cancelReverseLearn() {
+    this.reverseLearnDev = null;
+    this.reverseCC = null;
+    if (this._reverseClickHandler) {
+      document.removeEventListener('click', this._reverseClickHandler, true);
+      this._reverseClickHandler = null;
+    }
+    document.getElementById('midi-in-rlearn')?.classList.remove('active');
+    document.body.classList.remove('midi-reverse-arming', 'midi-reverse-pick');
+  }
+
+  // Resolve a clicked DOM element into a mapping target + range.
+  resolveTargetFromEl(el) {
+    const t = el.closest('[data-midi-target]');
+    if (t) {
+      const id = t.getAttribute('data-midi-target');
+      const def = this.ccLearnTargets.find(d => d.target === id);
+      return { target: id, min: def ? def.min : 0, max: def ? def.max : 1, label: def ? def.label : id };
+    }
+    const p = el.closest('[data-param]');
+    if (p) {
+      const id = p.getAttribute('data-param');
+      const def = this.ccLearnTargets.find(d => d.target === id);
+      let min = parseFloat(p.getAttribute('data-min'));
+      let max = parseFloat(p.getAttribute('data-max'));
+      if (isNaN(min)) min = def ? def.min : 0;
+      if (isNaN(max)) max = def ? def.max : 1;
+      return { target: id, min, max, label: def ? def.label : id };
+    }
+    return null;
+  }
+
+  // ===== BANKS =====
+
+  refreshBankSelect() {
+    const sel = document.getElementById('midi-bank-select');
+    if (!sel) return;
+    sel.innerHTML = '<option value="-1">— Bank —</option>';
+    this.banks.forEach((b, i) => {
+      const opt = document.createElement('option');
+      opt.value = i;
+      opt.textContent = b.name || ('Bank ' + (i + 1));
+      sel.appendChild(opt);
+    });
+    sel.value = String(this.activeBank);
+  }
+
+  saveBank() {
+    const name = (window.prompt('バンク名:', 'Bank ' + (this.banks.length + 1)) || '').trim();
+    if (!name) return;
+    this.banks.push({
+      name,
+      ccMap: JSON.parse(JSON.stringify(this.ccMap)),
+      ccMap2: JSON.parse(JSON.stringify(this.ccMap2)),
+    });
+    this.activeBank = this.banks.length - 1;
+    this.refreshBankSelect();
+    this.saveConfig();
+    this.updateStatus('Bank保存: ' + name);
+  }
+
+  loadBank(index) {
+    if (index < 0 || index >= this.banks.length) {
+      this.activeBank = -1;
+      return;
+    }
+    const b = this.banks[index];
+    this.ccMap  = JSON.parse(JSON.stringify(b.ccMap  || {}));
+    this.ccMap2 = JSON.parse(JSON.stringify(b.ccMap2 || {}));
+    this.activeBank = index;
+    this.renderMaps();
+    this.saveConfig();
+    this.updateStatus('Bank: ' + (b.name || index));
+  }
+
+  deleteBank() {
+    if (this.activeBank < 0 || this.activeBank >= this.banks.length) {
+      this.updateStatus('バンク未選択');
+      return;
+    }
+    const removed = this.banks.splice(this.activeBank, 1)[0];
+    this.activeBank = -1;
+    this.refreshBankSelect();
+    this.saveConfig();
+    this.updateStatus('Bank削除: ' + (removed?.name || ''));
+  }
+
+  // ===== EXPORT / IMPORT =====
+
+  exportConfig() {
+    const cfg = {
+      version: 1,
+      enabled: this.enabled,
+      in1: { deviceName: this.selectedInput ? this.selectedInput.name : null,  mode: this.mode,  ccMap: this.ccMap },
+      in2: { deviceName: this.selectedInput2 ? this.selectedInput2.name : null, mode: this.mode2, ccMap: this.ccMap2 },
+      banks: this.banks,
+      activeBank: this.activeBank,
+    };
+    const json = JSON.stringify(cfg, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const now = new Date();
+    const stamp = now.toISOString().slice(0, 10).replace(/-/g, '') + '_' +
+                  now.toTimeString().slice(0, 5).replace(':', '');
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `DLOSy20_midi_${stamp}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    this.updateStatus('MIDI設定をエクスポート');
+  }
+
+  importConfig() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        try {
+          const cfg = JSON.parse(ev.target.result);
+          this.applyConfig(cfg);
+          this.renderMaps();
+          this.refreshBankSelect();
+          this.syncUIFromState();
+          if (this.midiAccess) this.populateInputs();
+          this.saveConfig();
+          this.updateStatus('MIDI設定をインポート: ' + file.name);
+        } catch (err) {
+          console.error('MIDI import error:', err);
+          this.updateStatus('⚠ インポート失敗');
+        }
+      };
+      reader.readAsText(file);
+    });
+    input.click();
   }
 }
 
