@@ -1941,6 +1941,33 @@ body.resizing-row {
   pointer-events: none;
 }
 
+.unim-glyph-canvas {
+  width: 80%;
+  height: 80%;
+  pointer-events: none;
+  image-rendering: auto;
+}
+
+.unim-opt-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-secondary);
+  align-self: center;
+}
+
+.unim-range-input {
+  width: 40px;
+  height: 22px;
+  background: var(--bg-panel-inset, #14181b);
+  border: 1px solid var(--border-panel, #2a2a2a);
+  color: var(--text-primary, #d7dde1);
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-align: center;
+  padding: 0 2px;
+}
+
 /* ===== PRESET MANAGER ===== */
 .preset-controls {
   display: flex;

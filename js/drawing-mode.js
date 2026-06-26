@@ -286,91 +286,117 @@ class DrawingMode {
     this.switchSlot(nextSlot);
   }
 
-  // Import SVG path data from Unim glyph into active slot
+  // Import SVG path data (e.g. from a glyph database) into active slot
   importSVGPath(svgPathData) {
     if (!this.canvas || !this.ctx2d) return;
 
     const size = this.canvasSize; // 256
-    const svgSize = 1000; // Unim viewBox
+    const svgSize = 1000; // viewBox
     const scale = size / svgSize;
 
-    // Create offscreen canvas for path tracing
     const offCanvas = document.createElement('canvas');
     offCanvas.width = size;
     offCanvas.height = size;
-    const offCtx = offCanvas.getContext('2d');
+    const offCtx = offCanvas.getContext('2d', { willReadFrequently: true });
 
-    // Scale and draw the SVG path
     offCtx.save();
     offCtx.scale(scale, scale);
-
     const path = new Path2D(svgPathData);
     offCtx.lineWidth = 3 / scale;
     offCtx.strokeStyle = '#fff';
     offCtx.stroke(path);
     offCtx.restore();
 
-    // Extract outline points by scanning the stroked path
-    const imageData = offCtx.getImageData(0, 0, size, size);
-    const data = imageData.data;
-    const points = [];
+    return this._applyTracedCanvas(offCtx, size);
+  }
 
-    // Find contour points (non-transparent pixels on the stroke)
-    // Sample at regular intervals along edges for a clean outline
-    for (let y = 0; y < size; y += 2) {
-      for (let x = 0; x < size; x += 2) {
-        const idx = (y * size + x) * 4;
-        if (data[idx + 3] > 128) { // alpha > 128
-          points.push({ x, y });
-        }
-      }
+  // Render any character / symbol with the browser's own font and trace its
+  // outline into the active slot. This is the fully-local replacement for the
+  // glyph-database API: no Unicode table, no network — works for anything the
+  // installed fonts can draw.
+  importGlyphChar(char, fontFamily) {
+    if (!this.canvas || !this.ctx2d || !char) return false;
+
+    const size = this.canvasSize;
+    const font = fontFamily || 'sans-serif';
+
+    const offCanvas = document.createElement('canvas');
+    offCanvas.width = size;
+    offCanvas.height = size;
+    const offCtx = offCanvas.getContext('2d', { willReadFrequently: true });
+
+    offCtx.textAlign = 'center';
+    offCtx.textBaseline = 'middle';
+
+    // Fit the glyph to the canvas
+    let fontPx = Math.floor(size * 0.8);
+    offCtx.font = `${fontPx}px ${font}`;
+    const m = offCtx.measureText(char);
+    const w = m.width || fontPx;
+    const ascent = m.actualBoundingBoxAscent || fontPx * 0.7;
+    const descent = m.actualBoundingBoxDescent || fontPx * 0.2;
+    const maxDim = Math.max(w, ascent + descent);
+    if (maxDim > size * 0.85) {
+      fontPx = Math.max(8, Math.floor(fontPx * (size * 0.85) / maxDim));
+      offCtx.font = `${fontPx}px ${font}`;
     }
 
-    if (points.length === 0) return;
+    // Stroke the glyph OUTLINE → a clean traceable contour (like the SVG case)
+    offCtx.lineWidth = 2;
+    offCtx.lineJoin = 'round';
+    offCtx.strokeStyle = '#fff';
+    offCtx.strokeText(char, size / 2, size / 2);
 
-    // Sort points to form a continuous path (nearest-neighbor sort)
+    return this._applyTracedCanvas(offCtx, size);
+  }
+
+  // Shared: trace the white shape on an offscreen canvas into an ordered point
+  // path and load it into the active slot. Used by SVG import + glyph rendering.
+  _applyTracedCanvas(offCtx, size) {
+    const data = offCtx.getImageData(0, 0, size, size).data;
+    const points = [];
+
+    // Collect contour pixels (sampled every 2px for a clean, light outline)
+    for (let y = 0; y < size; y += 2) {
+      for (let x = 0; x < size; x += 2) {
+        if (data[(y * size + x) * 4 + 3] > 128) points.push({ x, y });
+      }
+    }
+    if (points.length === 0) return false;
+
+    // Nearest-neighbor sort into a continuous path
     const sortedPoints = [points[0]];
     const used = new Set([0]);
-
     for (let i = 1; i < points.length; i++) {
       const last = sortedPoints[sortedPoints.length - 1];
-      let nearest = -1;
-      let nearestDist = Infinity;
-
+      let nearest = -1, nearestDist = Infinity;
       for (let j = 0; j < points.length; j++) {
         if (used.has(j)) continue;
         const dx = points[j].x - last.x;
         const dy = points[j].y - last.y;
         const dist = dx * dx + dy * dy;
-        if (dist < nearestDist) {
-          nearestDist = dist;
-          nearest = j;
-        }
+        if (dist < nearestDist) { nearestDist = dist; nearest = j; }
       }
-
       if (nearest === -1) break;
       used.add(nearest);
       sortedPoints.push(points[nearest]);
     }
 
-    // Apply to active slot
     const slot = this.slots[this.activeSlot];
     slot.points = sortedPoints;
 
-    // Redraw and convert to waveform
     this.redrawCanvas();
     this.convertToWaveform();
     this.updateWaveformPreview();
     this.updatePointCount();
 
-    // Update VCO Loop if running in drawing mode
     if (window.vcoLoop && vcoLoop.isOscRunning && vcoLoop.isDrawingOsc) {
       vcoLoop.refreshDrawingOsc();
     }
-    // Update Arpeggiator if running in drawing mode (real-time reflection)
     if (window.arpeggiator && arpeggiator.refreshDrawingOsc) {
       arpeggiator.refreshDrawingOsc();
     }
+    return true;
   }
 
   // ===== DRAWING / ERASING =====
