@@ -3,10 +3,11 @@
  * Continuous parameter automation synced to step sequencer bar length
  */
 import { audioEngine } from './audio-engine';
-import { stepSequencer } from './step-sequencer';
 import { drawingMode } from './drawing-mode';
-import { presetManager } from './preset-manager';
 import { vcoEase } from './vco-ease';
+import { transport } from './transport';
+import { registerSerializable } from './registry';
+import { emit } from './events';
 
 interface CurvePoint {
   x: number;
@@ -39,15 +40,24 @@ class VCOLoop {
   osc: any;
   gain: GainNode | null;
   filter: BiquadFilterNode | null;
-  isOscRunning: boolean;
   playheadPosition: number;
   animationFrameId: number | null;
-  continuousMode: boolean;
   _continuousTimerId: ReturnType<typeof setInterval> | null;
-  stepStartTime: number;
-  stepDuration: number;
-  lastStepIndex: number;
-  lastTotalSteps: number;
+  // The live oscillator phase below is shared via the dependency-free
+  // `transport` module so vco-ease can read it without importing vco-loop
+  // (breaks the vco-loop ⇄ vco-ease cycle).
+  get isOscRunning(): boolean { return transport.vcoRunning; }
+  set isOscRunning(v: boolean) { transport.vcoRunning = v; }
+  get continuousMode(): boolean { return transport.vcoContinuous; }
+  set continuousMode(v: boolean) { transport.vcoContinuous = v; }
+  get stepStartTime(): number { return transport.vcoStepStartTime; }
+  set stepStartTime(v: number) { transport.vcoStepStartTime = v; }
+  get stepDuration(): number { return transport.vcoStepDuration; }
+  set stepDuration(v: number) { transport.vcoStepDuration = v; }
+  get lastStepIndex(): number { return transport.vcoStepIndex; }
+  set lastStepIndex(v: number) { transport.vcoStepIndex = v; }
+  get lastTotalSteps(): number { return transport.vcoTotalSteps; }
+  set lastTotalSteps(v: number) { transport.vcoTotalSteps = v; }
   activePattern: number;
   patternBank: (VCOPatternSlot | null)[];
   chainMode: string;
@@ -200,7 +210,7 @@ class VCOLoop {
     });
     const volSlider = document.getElementById('vco-vol-slider') as HTMLInputElement | null;
     if (volSlider) volSlider.value = String(Math.round(this.masterVolume * 100));
-    if (presetManager) presetManager.autoSave();
+    emit('state:changed');
   }
 
   buildPatternBankUI() {
@@ -253,7 +263,7 @@ class VCOLoop {
     this._lastTickStep = -1;
     this._chainGen++;
     this.buildChainUI();
-    if (presetManager) presetManager.autoSave?.();
+    emit('state:changed');
   }
 
   toggleChainMember(index: number) {
@@ -261,7 +271,7 @@ class VCOLoop {
     else this.chainSet.add(index);
     this._chainGen++; // cancel pending deferred advances tied to the old set
     this.buildChainUI();
-    if (presetManager) presetManager.autoSave?.();
+    emit('state:changed');
   }
 
   resetChain() {
@@ -271,7 +281,7 @@ class VCOLoop {
     this._lastTickStep = -1;
     this._chainGen++;
     this.buildChainUI();
-    if (presetManager) presetManager.autoSave?.();
+    emit('state:changed');
   }
 
   // Schedule a chain advance at the step's audio time (whenMs is a
@@ -288,7 +298,7 @@ class VCOLoop {
       // Skip if the chain was changed/disabled or playback stopped meanwhile.
       if (gen !== this._chainGen) return;
       if (this.chainMode === 'off') return;
-      if (stepSequencer && !stepSequencer.isPlaying) return;
+      if (!transport.isPlaying) return;
       this._advanceChain();
     }, delay);
   }
@@ -632,12 +642,9 @@ class VCOLoop {
       // In continuous mode, just record timestamp for interpolation
       this.stepStartTime = performance.now();
       // Calculate step duration from BPM.
-      // (テンポは audioEngine.params.tempo が真実の値。旧コードは存在しない
-      //  stepSequencer.bpm を読み、常に 120 にフォールバックしていた → 型厳密化で検出)
-      if (stepSequencer) {
-        const bpm = (audioEngine && audioEngine.params.tempo) || 120;
-        this.stepDuration = (60000 / bpm) / 4; // per-step duration in ms
-      }
+      // (テンポは audioEngine.params.tempo が真実の値)
+      const bpm = (audioEngine && audioEngine.params.tempo) || 120;
+      this.stepDuration = (60000 / bpm) / 4; // per-step duration in ms
     } else {
       // STEP mode: discrete update with ADSR envelope.
       // Apply easing to the per-step sampled position so the modulation curve
@@ -942,10 +949,10 @@ class VCOLoop {
       }
       if (this.enabled) {
       // If sequencer is already playing, start oscillator immediately
-      if (stepSequencer && stepSequencer.isPlaying && audioEngine.isInitialized) {
+      if (transport.isPlaying && audioEngine.isInitialized) {
         this.startOsc();
         // Sync playhead to current sequencer position
-        const pos = stepSequencer.currentStep / stepSequencer.numSteps;
+        const pos = transport.currentStep / transport.numSteps;
         this.playheadPosition = pos;
         this.applyAtPosition(pos);
         // Start continuous loop if in CONT mode
@@ -1046,7 +1053,7 @@ class VCOLoop {
     ctx.fillRect(0, 0, w, h);
 
     // Grid lines (step markers)
-    const numSteps = stepSequencer ? stepSequencer.numSteps : 16;
+    const numSteps = transport.numSteps;
     ctx.strokeStyle = '#2a2a32';
     ctx.lineWidth = 1;
     for (let i = 0; i <= numSteps; i++) {
@@ -1278,6 +1285,57 @@ class VCOLoop {
     }
     this.drawCurve();
   }
+
+  // ===== PRESET STATE (Serializable) =====
+
+  readonly stateKey = 'vcoLoop';
+
+  getState() {
+    const curves: Record<string, { points: CurvePoint[] }> = {};
+    Object.entries(this.curves).forEach(([key, curve]) => {
+      curves[key] = { points: curve.points.map(p => ({ x: p.x, y: p.y })) };
+    });
+    return {
+      waveType: this.waveType,
+      masterVolume: this.masterVolume,
+      continuousMode: this.continuousMode || false,
+      curves,
+      activePattern: this.activePattern,
+      patternBank: this.patternBank.map(p => p ? JSON.parse(JSON.stringify(p)) : null),
+      chainMode: this.chainMode,
+      chainSet: Array.from(this.chainSet),
+    };
+  }
+
+  setState(state: any) {
+    if (!state) return;
+    this.waveType = state.waveType;
+    this.masterVolume = state.masterVolume;
+    if (state.continuousMode !== undefined) this.continuousMode = state.continuousMode;
+    Object.entries(state.curves).forEach(([key, saved]: [string, any]) => {
+      if (this.curves[key]) {
+        this.curves[key].points = saved.points.map((p: any) => ({ x: p.x, y: p.y }));
+      }
+    });
+    if (state.patternBank) {
+      this.activePattern = state.activePattern || 0;
+      this.patternBank = state.patternBank.map((p: any) => p ? JSON.parse(JSON.stringify(p)) : null);
+    }
+    // Pattern chaining
+    if (state.chainMode) this.chainMode = state.chainMode;
+    if (Array.isArray(state.chainSet)) this.chainSet = new Set(state.chainSet);
+    this.drawCurve();
+    this.buildPatternBankUI();
+    this.buildChainUI();
+    // Update wave button UI
+    document.querySelectorAll<HTMLElement>('.vco-wave-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.wave === this.waveType);
+    });
+    // Update volume slider
+    const volSlider = document.getElementById('vco-vol-slider') as HTMLInputElement | null;
+    if (volSlider) volSlider.value = String(Math.round(this.masterVolume * 100));
+  }
 }
 
 export const vcoLoop = new VCOLoop();
+registerSerializable(vcoLoop);

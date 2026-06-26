@@ -5,8 +5,9 @@
  */
 import { audioEngine } from './audio-engine';
 import { vcoLoop } from './vco-loop';
-import { presetManager } from './preset-manager';
 import { arpeggiator } from './arpeggiator';
+import { registerSerializable } from './registry';
+import { emit } from './events';
 
 interface DrawPoint {
   x: number;
@@ -219,8 +220,8 @@ class DrawingMode {
     document.getElementById('draw-slots-8')?.classList.toggle('active', this.visibleSlotCount === 8);
     document.getElementById('draw-slots-16')?.classList.toggle('active', this.visibleSlotCount === 16);
 
-    // Auto-save preset if manager exists
-    if (presetManager) presetManager.autoSave();
+    // Auto-save preset (PresetManager listens for 'state:changed')
+    emit('state:changed');
   }
 
   buildPatternBankUI() {
@@ -907,6 +908,73 @@ class DrawingMode {
       el.textContent = `Points: ${this.slots[this.activeSlot].points.length}`;
     }
   }
+
+  // ===== PRESET STATE (Serializable) =====
+
+  readonly stateKey = 'drawing';
+
+  getState() {
+    return {
+      visibleSlotCount: this.visibleSlotCount,
+      activeSlot: this.activeSlot,
+      slots: this.slots.map(slot => ({
+        name: slot.name,
+        points: slot.points.map(p => ({ x: p.x, y: p.y })),
+        waveX: [...slot.waveX],
+        waveY: [...slot.waveY],
+      })),
+      activePattern: this.activePattern,
+      patternBank: this.patternBank.map(p => p ? {
+        visibleSlotCount: p.visibleSlotCount,
+        slots: p.slots.map((slot: any) => ({
+          name: slot.name,
+          points: slot.points.map((pt: any) => ({ x: pt.x, y: pt.y })),
+          waveX: [...slot.waveX],
+          waveY: [...slot.waveY],
+        }))
+      } : null),
+    };
+  }
+
+  setState(state: any) {
+    if (!state) return;
+    // 1. Load active slots
+    this.visibleSlotCount = state.visibleSlotCount || 8;
+    this.activeSlot = state.activeSlot || 0;
+    state.slots.forEach((saved: any, i: number) => {
+      if (i < this.slots.length) {
+        if (saved.name) this.slots[i].name = saved.name;
+        this.slots[i].points = saved.points.map((p: any) => ({ x: p.x, y: p.y }));
+        this.slots[i].waveX = [...saved.waveX];
+        this.slots[i].waveY = [...saved.waveY];
+      }
+    });
+    // 2. Load pattern bank
+    if (state.patternBank) {
+      this.activePattern = state.activePattern || 0;
+      this.patternBank = state.patternBank.map((p: any) => {
+        if (!p) return null;
+        return {
+          visibleSlotCount: p.visibleSlotCount || 8,
+          slots: p.slots.map((slot: any) => ({
+            name: slot.name,
+            points: slot.points.map((pt: any) => ({ x: pt.x, y: pt.y })),
+            waveX: [...slot.waveX],
+            waveY: [...slot.waveY],
+          }))
+        };
+      });
+    }
+
+    // Update UI components
+    document.getElementById('draw-slots-8')?.classList.toggle('active', this.visibleSlotCount === 8);
+    document.getElementById('draw-slots-16')?.classList.toggle('active', this.visibleSlotCount === 16);
+    this.buildSlotTabs();
+    this.redrawCanvas();
+    this.updateWaveformPreview();
+    this.buildPatternBankUI();
+  }
 }
 
 export const drawingMode = new DrawingMode();
+registerSerializable(drawingMode);

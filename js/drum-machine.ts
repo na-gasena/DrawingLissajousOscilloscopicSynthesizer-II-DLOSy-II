@@ -5,7 +5,8 @@
  */
 import { audioEngine } from './audio-engine';
 import { midiOut } from './midi-out';
-import { presetManager } from './preset-manager';
+import { registerSerializable } from './registry';
+import { emit } from './events';
 
 interface DrumTrackDef {
   key: string;
@@ -132,7 +133,7 @@ class DrumMachine {
     }
     this.buildUI();
     this.buildPatternBankUI();
-    if (presetManager) presetManager.autoSave();
+    emit('state:changed');
   }
 
   buildPatternBankUI() {
@@ -245,6 +246,42 @@ class DrumMachine {
       }
     });
   }
+
+  // ===== PRESET STATE (Serializable) =====
+
+  readonly stateKey = 'drums';
+
+  getState() {
+    const tracks: Record<string, { pattern: number[]; muted: boolean; volume: number }> = {};
+    Object.entries(this.tracks).forEach(([key, track]) => {
+      tracks[key] = { pattern: [...track.pattern], muted: track.muted, volume: track.volume };
+    });
+    return {
+      numSteps: this.numSteps,
+      tracks,
+      activePattern: this.activePattern,
+      patternBank: this.patternBank.map(p => p ? JSON.parse(JSON.stringify(p)) : null),
+    };
+  }
+
+  setState(state: any) {
+    if (!state) return;
+    this.numSteps = state.numSteps;
+    Object.entries(state.tracks).forEach(([key, saved]: [string, any]) => {
+      if (this.tracks[key]) {
+        this.tracks[key].pattern = [...saved.pattern];
+        this.tracks[key].muted = saved.muted;
+        this.tracks[key].volume = saved.volume;
+      }
+    });
+    if (state.patternBank) {
+      this.activePattern = state.activePattern || 0;
+      this.patternBank = state.patternBank.map((p: any) => p ? JSON.parse(JSON.stringify(p)) : null);
+    }
+    this.buildUI();
+    this.buildPatternBankUI();
+  }
 }
 
 export const drumMachine = new DrumMachine();
+registerSerializable(drumMachine);

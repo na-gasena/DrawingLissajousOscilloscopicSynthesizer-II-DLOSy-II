@@ -4,7 +4,8 @@
  * Based on osci-render effect analysis
  */
 import { audioEngine } from './audio-engine';
-import { presetManager } from './preset-manager';
+import { registerSerializable } from './registry';
+import { emit } from './events';
 
 interface EffectParamDef {
   id: string;
@@ -765,12 +766,20 @@ class EffectsEngine {
   }
 
   triggerAutoSave() {
-    if (presetManager) {
-      presetManager.autoSave();
-    }
+    emit('state:changed');
   }
 
   // ===== STATE COLLECT / APPLY (for PresetManager) =====
+
+  readonly stateKey = 'effects';
+
+  getState() {
+    return this.collectState();
+  }
+
+  setState(state: any) {
+    this.applyState(state);
+  }
 
   collectState() {
     const state: any = { __order: [...this.effectOrder] };
@@ -872,3 +881,4 @@ class EffectsEngine {
 }
 
 export const effectsEngine = new EffectsEngine();
+registerSerializable(effectsEngine);

@@ -7,7 +7,9 @@ import { drumMachine } from './drum-machine';
 import { vcoLoop } from './vco-loop';
 import { drawingMode } from './drawing-mode';
 import { cvClock } from './cv-clock';
-import { presetManager } from './preset-manager';
+import { transport } from './transport';
+import { registerSerializable } from './registry';
+import { emit } from './events';
 
 interface SeqNote {
   name: string;
@@ -58,10 +60,16 @@ const WAVE_ICONS: Record<string, string> = {
 };
 
 class StepSequencer {
-  numSteps: number;
-  currentStep: number;
+  // numSteps / currentStep / isPlaying are the live transport state, shared via
+  // the dependency-free `transport` module so vco-loop can read them without
+  // importing step-sequencer (breaks the step-sequencer ⇄ vco-loop cycle).
+  get numSteps(): number { return transport.numSteps; }
+  set numSteps(v: number) { transport.numSteps = v; }
+  get currentStep(): number { return transport.currentStep; }
+  set currentStep(v: number) { transport.currentStep = v; }
+  get isPlaying(): boolean { return transport.isPlaying; }
+  set isPlaying(v: boolean) { transport.isPlaying = v; }
   editStep: number;
-  isPlaying: boolean;
   timerId: ReturnType<typeof setTimeout> | null;
   enabled: boolean;
   steps: SeqStep[];
@@ -187,7 +195,7 @@ class StepSequencer {
     this.buildUI();
     this.bindControls();
     this.updateUI();
-    if (presetManager) presetManager.autoSave();
+    emit('state:changed');
   }
 
   buildPatternBankUI() {
@@ -716,6 +724,32 @@ class StepSequencer {
   updateTempo() {
     // Tempo changes take effect on next scheduled step
   }
+
+  // ===== PRESET STATE (Serializable) =====
+
+  readonly stateKey = 'sequencer';
+
+  getState() {
+    return {
+      numSteps: this.numSteps,
+      steps: this.steps.map(s => ({ ...s })),
+      activePattern: this.activePattern,
+      patternBank: this.patternBank.map(p => p ? { numSteps: p.numSteps, steps: p.steps.map(s => ({ ...s })) } : null),
+    };
+  }
+
+  setState(state: any) {
+    if (!state) return;
+    this.numSteps = state.numSteps;
+    this.steps = state.steps.map((s: any) => ({ ...s }));
+    if (state.patternBank) {
+      this.activePattern = state.activePattern || 0;
+      this.patternBank = state.patternBank.map((p: any) => p ? { numSteps: p.numSteps, steps: p.steps.map((s: any) => ({ ...s })) } : null);
+    }
+    this.setStepCount(state.numSteps);
+    this.buildPatternBankUI();
+  }
 }
 
 export const stepSequencer = new StepSequencer();
+registerSerializable(stepSequencer);

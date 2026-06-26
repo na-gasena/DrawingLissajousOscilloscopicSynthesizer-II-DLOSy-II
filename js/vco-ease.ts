@@ -14,8 +14,9 @@
  * restores a preset to its original shape (CUSTOM resets to a neutral curve).
  * CUSTOM is your own slot — it is never overwritten by selecting a preset.
  */
-import { vcoLoop } from './vco-loop';
-import { presetManager } from './preset-manager';
+import { transport } from './transport';
+import { registerSerializable } from './registry';
+import { emit } from './events';
 
 interface EasePoint {
   x: number;
@@ -204,7 +205,7 @@ class VCOEase {
       const valEl = document.getElementById('ease-amount-val');
       if (valEl) valEl.textContent = target.value + '%';
       this.draw();
-      if (presetManager) presetManager.autoSave?.();
+      emit('state:changed');
     });
 
     // Reset current mode
@@ -240,7 +241,7 @@ class VCOEase {
     this.updateButtons();
     this.updateHint();
     this.draw();
-    if (presetManager) presetManager.autoSave?.();
+    emit('state:changed');
   }
 
   // Restore the current mode: presets revert to their analytic shape; CUSTOM
@@ -255,7 +256,7 @@ class VCOEase {
     this.updateButtons();
     this.updateHint();
     this.draw();
-    if (presetManager) presetManager.autoSave?.();
+    emit('state:changed');
   }
 
   updateButtons() {
@@ -366,7 +367,7 @@ class VCOEase {
   onCanvasUp() {
     if (this.draggingPoint !== null) {
       this.draggingPoint = null;
-      if (presetManager) presetManager.autoSave?.();
+      emit('state:changed');
     }
   }
 
@@ -386,7 +387,7 @@ class VCOEase {
     this.updateButtons();
     this.updateHint();
     this.draw();
-    if (presetManager) presetManager.autoSave?.();
+    emit('state:changed');
   }
 
   // ===== VISUALIZATION =====
@@ -398,7 +399,7 @@ class VCOEase {
     const loop = () => {
       const tab = document.getElementById('center-tab-ease');
       const active = tab && tab.classList.contains('active');
-      const playing = vcoLoop && vcoLoop.isOscRunning;
+      const playing = transport.vcoRunning;
       if (active && playing) {
         this.syncCanvasSize();
         this.draw();
@@ -479,7 +480,7 @@ class VCOEase {
     });
 
     // Live playhead dot (CONT: interpolated; STEP: discrete)
-    if (vcoLoop && vcoLoop.isOscRunning) {
+    if (transport.vcoRunning) {
       const linearPhase = this._currentLinearPhase();
       const easedPhase = this.apply(linearPhase);
       const dotX = X(linearPhase);
@@ -511,17 +512,18 @@ class VCOEase {
   }
 
   _currentLinearPhase() {
-    if (!vcoLoop) return 0;
-    const total = vcoLoop.lastTotalSteps || 16;
-    if (vcoLoop.continuousMode) {
-      const elapsed = performance.now() - vcoLoop.stepStartTime;
-      const frac = vcoLoop.stepDuration > 0 ? Math.min(elapsed / vcoLoop.stepDuration, 1) : 0;
-      return Math.max(0, Math.min(1, (vcoLoop.lastStepIndex + frac) / total));
+    const total = transport.vcoTotalSteps || 16;
+    if (transport.vcoContinuous) {
+      const elapsed = performance.now() - transport.vcoStepStartTime;
+      const frac = transport.vcoStepDuration > 0 ? Math.min(elapsed / transport.vcoStepDuration, 1) : 0;
+      return Math.max(0, Math.min(1, (transport.vcoStepIndex + frac) / total));
     }
-    return Math.max(0, Math.min(1, (vcoLoop.lastStepIndex || 0) / total));
+    return Math.max(0, Math.min(1, (transport.vcoStepIndex || 0) / total));
   }
 
-  // ===== PRESET PERSISTENCE HOOKS =====
+  // ===== PRESET PERSISTENCE HOOKS (Serializable) =====
+
+  readonly stateKey = 'vcoEase';
 
   getState() {
     const edited: Record<string, EasePoint[]> = {};
@@ -559,6 +561,7 @@ class VCOEase {
 }
 
 export const vcoEase = new VCOEase();
+registerSerializable(vcoEase);
 
 // 初期化は app.js が DOMContentLoaded で vcoEase.init() を呼ぶ。
 // （旧コードはモジュール評価時に init() を eager 実行していたが、それが

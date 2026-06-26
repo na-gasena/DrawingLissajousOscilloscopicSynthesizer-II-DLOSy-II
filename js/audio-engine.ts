@@ -3,6 +3,7 @@
  * Web Audio API based synthesizer engine
  */
 import { effectsEngine } from './effects-engine';
+import { registerSerializable } from './registry';
 
 // 'drawing' は Drawing Mode の波形を指すセンチネル。標準 OscillatorType に加えて
 // アプリ全体で波形種別として保存・比較されるため、型に含める。
@@ -532,6 +533,38 @@ class AudioEngine {
       this.drumGains[drumName].gain.value = value;
     }
   }
+
+  // ===== PRESET STATE (Serializable) =====
+
+  readonly stateKey = 'audioEngine';
+
+  getState() {
+    return { params: { ...this.params } };
+  }
+
+  setState(state: any) {
+    if (!state || !state.params) return;
+    Object.entries(state.params).forEach(([key, value]) => {
+      // Set param state directly so UI and audio stay in sync.
+      (this.params as any)[key] = value;
+    });
+    // Fire updates so UI components reflect the new values.
+    this.syncParamUIDom();
+  }
+
+  // Sync `.param-slider` DOM values from `this.params`.
+  syncParamUIDom() {
+    const sliders = document.querySelectorAll<HTMLInputElement>('.param-slider');
+    sliders.forEach(slider => {
+      const pName = slider.dataset.param;
+      if (pName && (this.params as any)[pName] !== undefined) {
+        slider.value = String((this.params as any)[pName]);
+        // Manually trigger the 'input' event to update labels and logic.
+        slider.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    });
+  }
 }
 
 export const audioEngine = new AudioEngine();
+registerSerializable(audioEngine);
