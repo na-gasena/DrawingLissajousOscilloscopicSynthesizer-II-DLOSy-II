@@ -1,0 +1,49 @@
+name: Deploy to GitHub Pages
+
+on:
+  # master ブランチへの push で自動デプロイ
+  push:
+    branches: [master]
+  # Actions タブから手動実行も可能
+  workflow_dispatch:
+
+# GitHub Pages へのデプロイに必要な権限
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同時実行を1つに制限（古い実行はキャンセル）
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Stage site files
+        # アプリに必要なファイルだけを _site にまとめる（作業用フォルダは公開しない）
+        run: |
+          mkdir -p _site
+          cp index.html _site/
+          cp -r js _site/
+          cp -r styles _site/
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
