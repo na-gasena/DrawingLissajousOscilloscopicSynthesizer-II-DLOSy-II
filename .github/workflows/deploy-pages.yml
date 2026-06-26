@@ -28,13 +28,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Stage site files
-        # アプリに必要なファイルだけを _site にまとめる（作業用フォルダは公開しない）
-        run: |
-          mkdir -p _site
-          cp index.html _site/
-          cp -r js _site/
-          cp -r styles _site/
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (Vite)
+        # TypeScript/ESM を dist/ にバンドルする
+        run: npm run build
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -42,7 +47,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: _site
+          path: dist
 
       - name: Deploy to GitHub Pages
         id: deployment
