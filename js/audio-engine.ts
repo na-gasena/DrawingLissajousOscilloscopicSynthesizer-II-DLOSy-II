@@ -508,13 +508,15 @@ class AudioEngine {
 
     switch (name) {
       case 'masterVol':
-        if (this.masterGain) this.masterGain!.gain.value = value;
+        // Glide instead of jumping the gain — a hard `.value =` write steps the
+        // signal by one sample and produces an audible click/zipper noise.
+        if (this.masterGain) this.masterGain!.gain.setTargetAtTime(value, this.ctx!.currentTime, 0.015);
         break;
       case 'cutoff':
-        if (this.filter) this.filter!.frequency.value = value;
+        if (this.filter) this.filter!.frequency.setTargetAtTime(value, this.ctx!.currentTime, 0.01);
         break;
       case 'resonance':
-        if (this.filter) this.filter!.Q.value = value;
+        if (this.filter) this.filter!.Q.setTargetAtTime(value, this.ctx!.currentTime, 0.01);
         break;
       case 'delayTime':
         if (this.delayNode) this.delayNode.delayTime.value = value;

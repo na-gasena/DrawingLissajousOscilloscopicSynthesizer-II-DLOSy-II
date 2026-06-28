@@ -216,9 +216,11 @@ class Arpeggiator {
     if (!audioEngine || !audioEngine.isInitialized) return;
     const ctx = audioEngine.ctx!;
 
-    // Gain + Pan for L
+    // Gain + Pan for L. Start silent — the per-step ADSR envelope drives the
+    // gain from its first sample, so a non-zero initial value would jump down to
+    // ~0 on the first step and click.
     this.gainL = ctx.createGain();
-    this.gainL.gain.value = this.volume;
+    this.gainL.gain.value = 0;
     this.panL = ctx.createStereoPanner();
     this.panL.pan.value = -1;
     this.gainL.connect(this.panL);
@@ -226,7 +228,7 @@ class Arpeggiator {
 
     // Gain + Pan for R
     this.gainR = ctx.createGain();
-    this.gainR.gain.value = this.volume;
+    this.gainR.gain.value = 0;
     this.panR = ctx.createStereoPanner();
     this.panR.pan.value = 1;
     this.gainR.connect(this.panR);
@@ -325,39 +327,92 @@ class Arpeggiator {
 
   stopOsc() {
     if (!this.isOscRunning) return;
-    try { this.oscL?.stop(); } catch(e) {}
-    try { this.oscR?.stop(); } catch(e) {}
-    try { this.oscL?.disconnect(); } catch(e) {}
-    try { this.oscR?.disconnect(); } catch(e) {}
-    try { this.gainL?.disconnect(); } catch(e) {}
-    try { this.gainR?.disconnect(); } catch(e) {}
-    try { this.panL?.disconnect(); } catch(e) {}
-    try { this.panR?.disconnect(); } catch(e) {}
+    // Mark stopped immediately so the arp scheduler stops touching these nodes.
+    this.isOscRunning = false;
+
+    const ctx = audioEngine.ctx;
+    const FADE = 0.012; // ~12ms release fade to avoid a note-off click
+
+    const oscL = this.oscL, oscR = this.oscR;
+    const gainL = this.gainL, gainR = this.gainR;
+    const panL = this.panL, panR = this.panR;
     this.oscL = null; this.oscR = null;
     this.gainL = null; this.gainR = null;
-    this.isOscRunning = false;
+    this.panL = null; this.panR = null;
+
+    if (ctx && gainL && gainR) {
+      const now = ctx.currentTime;
+      // Cancel the pending per-step envelope and glide both channels to silence
+      // before stopping, so the oscillators aren't cut mid-waveform.
+      // Re-anchor at the current value explicitly rather than cancelAndHoldAtTime:
+      // the VOL slider drives these gains with setTargetAtTime, and
+      // cancelAndHoldAtTime after a setTargetAtTime is buggy in Chrome (it snaps to
+      // the target, not the current value) → a note-off click.
+      [gainL.gain, gainR.gain].forEach(g => {
+        const current = g.value;
+        g.cancelScheduledValues(now);
+        g.setValueAtTime(current, now);
+        g.linearRampToValueAtTime(0.0001, now + FADE);
+      });
+      try { oscL?.stop(now + FADE + 0.005); } catch(e) {}
+      try { oscR?.stop(now + FADE + 0.005); } catch(e) {}
+      setTimeout(() => {
+        try { oscL?.disconnect(); } catch(e) {}
+        try { oscR?.disconnect(); } catch(e) {}
+        try { gainL.disconnect(); } catch(e) {}
+        try { gainR.disconnect(); } catch(e) {}
+        try { panL?.disconnect(); } catch(e) {}
+        try { panR?.disconnect(); } catch(e) {}
+      }, (FADE + 0.02) * 1000);
+    } else {
+      // No context/gain — fall back to immediate teardown.
+      try { oscL?.stop(); } catch(e) {}
+      try { oscR?.stop(); } catch(e) {}
+      try { oscL?.disconnect(); } catch(e) {}
+      try { oscR?.disconnect(); } catch(e) {}
+      try { gainL?.disconnect(); } catch(e) {}
+      try { gainR?.disconnect(); } catch(e) {}
+      try { panL?.disconnect(); } catch(e) {}
+      try { panR?.disconnect(); } catch(e) {}
+    }
   }
 
-  // Set base frequency and update running oscillators
-  setBaseFreq(f: number) {
+  // Set base frequency and update running oscillators.
+  // `atTime` (audio-clock seconds): when given, the pitch change is scheduled on
+  // the audio grid instead of applied instantly — used by the arp step scheduler
+  // so the new note's pitch lands exactly when its gain envelope opens (an
+  // instant write fires the pitch up to 50ms early, mid-previous-note → click).
+  setBaseFreq(f: number, atTime?: number) {
     this.baseFreq = f;
     if (!this.isOscRunning) return;
     if (this.waveType === 'drawing') {
       const baseF = this._drawBaseF || 261.63;
-      if (this.oscL?.playbackRate) this.oscL.playbackRate.value = f / baseF;
-      if (this.oscR?.playbackRate) this.oscR.playbackRate.value = (f * this.ratio) / baseF;
+      if (this.oscL?.playbackRate) {
+        if (atTime !== undefined) this.oscL.playbackRate.setValueAtTime(f / baseF, atTime);
+        else this.oscL.playbackRate.value = f / baseF;
+      }
+      if (this.oscR?.playbackRate) {
+        if (atTime !== undefined) this.oscR.playbackRate.setValueAtTime((f * this.ratio) / baseF, atTime);
+        else this.oscR.playbackRate.value = (f * this.ratio) / baseF;
+      }
     } else {
-      if (this.oscL?.frequency) this.oscL.frequency.value = f;
-      if (this.oscR?.frequency) this.oscR.frequency.value = f * this.ratio;
+      if (this.oscL?.frequency) {
+        if (atTime !== undefined) this.oscL.frequency.setValueAtTime(f, atTime);
+        else this.oscL.frequency.value = f;
+      }
+      if (this.oscR?.frequency) {
+        if (atTime !== undefined) this.oscR.frequency.setValueAtTime(f * this.ratio, atTime);
+        else this.oscR.frequency.value = f * this.ratio;
+      }
     }
   }
 
   // Called by arpeggiator on each step: change oscillator frequency to the note
-  noteOn(midi: number) {
+  noteOn(midi: number, atTime?: number) {
     this._currentMidi = midi;
     const adjusted = midi + this.octave * 12;
     const f = 440 * Math.pow(2, (adjusted - 69) / 12);
-    this.setBaseFreq(f);
+    this.setBaseFreq(f, atTime);
   }
 
   _createPeriodicWave() {
@@ -473,7 +528,13 @@ class Arpeggiator {
   startArp() {
     this.stopArp();
     if (!audioEngine || !audioEngine.ctx) return;
-    this._nextStepTime = audioEngine.ctx.currentTime;
+    // Schedule the first step a bit AHEAD of the clock (> the 25ms lookahead
+    // interval). The first interval callback fires ~25ms later, so if we started
+    // at currentTime the first step would already be in the past — its envelope
+    // attack would be skipped and the gain would jump from 0 to mid-envelope,
+    // clicking on the very first note. The headroom lets the full attack (from 0)
+    // be scheduled in the future for a clean note onset.
+    this._nextStepTime = audioEngine.ctx.currentTime + 0.05;
     this._lookaheadId = setInterval(() => this._arpLookahead(), 25);
   }
 
@@ -497,7 +558,9 @@ class Arpeggiator {
     while (this._nextStepTime < now + SCHEDULE_AHEAD) {
       const note = this.getNextNote();
       if (note !== null) {
-        this.noteOn(note);
+        // Schedule the pitch change at the step's audio time so it coincides
+        // with the gain envelope opening (avoids an early, audible pitch glitch).
+        this.noteOn(note, this._nextStepTime);
         // ADSR エンベロープをゲインに適用
         if (this.gainL && this.gainR) {
           this._applyAdsrCurve(this.gainL.gain, this._nextStepTime, stepDur, this.volume);
@@ -982,9 +1045,11 @@ class Arpeggiator {
       this.volume = val / 100;
       const vv = document.getElementById('arp-vol-val');
       if (vv) vv.textContent = val + '%';
-      // 演奏中のゲインをリアルタイム更新
-      if (this.gainL) this.gainL.gain.value = this.volume;
-      if (this.gainR) this.gainR.gain.value = this.volume;
+      // 演奏中のゲインをリアルタイム更新（瞬間書き換えはクリックになるので平滑化。
+      // 次ステップの ADSR が this.volume を取り込んで上書きするため一時的なグライド）
+      const t = audioEngine.ctx ? audioEngine.ctx.currentTime : 0;
+      if (this.gainL) this.gainL.gain.setTargetAtTime(this.volume, t, 0.02);
+      if (this.gainR) this.gainR.gain.setTargetAtTime(this.volume, t, 0.02);
     });
 
     // ADSR envelope editor (canvas)

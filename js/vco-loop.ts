@@ -160,6 +160,7 @@ class VCOLoop {
         this.startContinuousLoop();
       } else {
         this.stopContinuousLoop();
+        this._fadeOutForStepSwitch();
       }
     }
   }
@@ -557,8 +558,12 @@ class VCOLoop {
     this.osc = newOsc;
   }
 
-  // Apply curve values at current playhead position
-  applyAtPosition(pos: number) {
+  // Apply curve values at current playhead position.
+  // `atTime` (audio-clock seconds): when provided, parameter changes are
+  // scheduled exactly on the audio grid rather than applied instantly. STEP
+  // mode passes the step's real audio time so the pitch/cutoff switch lines up
+  // with the gain envelope (a 50ms-early instant `.value` write glitches/clicks).
+  applyAtPosition(pos: number, atTime?: number) {
     if (!this.isOscRunning) return;
 
     const freq = this.getValueAt('frequency', pos);
@@ -567,16 +572,42 @@ class VCOLoop {
     const cutoff = this.getValueAt('cutoff', pos);
     const res = this.getValueAt('resonance', pos);
 
-    if (this.isDrawingOsc) {
-      this.osc.playbackRate.value = freq / this.baseFreq;
+    if (atTime !== undefined) {
+      if (this.isDrawingOsc) {
+        this.osc.playbackRate.setValueAtTime(freq / this.baseFreq, atTime);
+      } else {
+        this.osc.frequency.setValueAtTime(freq, atTime);
+      }
+      this.filter!.frequency.setValueAtTime(cutoff, atTime);
+      this.filter!.Q.setValueAtTime(res, atTime);
+      if (this.continuousMode) {
+        this.gain!.gain.setValueAtTime(vol * this.masterVolume, atTime);
+      }
     } else {
-      this.osc.frequency.value = freq;
-    }
-    this.filter!.frequency.value = cutoff;
-    this.filter!.Q.value = res;
-    // In STEP mode, gain is controlled by ADSR envelope (_fireStepADSR)
-    if (this.continuousMode) {
-      this.gain!.gain.value = vol * this.masterVolume;
+      const t = audioEngine.ctx!.currentTime;
+      // Frequency is phase-continuous, so an instant write never clicks — keep it
+      // exact (no glide) so pitch tracks the curve precisely.
+      if (this.isDrawingOsc) {
+        this.osc.playbackRate.value = freq / this.baseFreq;
+      } else {
+        this.osc.frequency.value = freq;
+      }
+      // Filter coefficient jumps DO click, and on a STEP→CONT switch the first
+      // tick would snap the cutoff/Q from the last step's value to the live one.
+      // Glide them (setTargetAtTime starts from the current value at `t`, so no
+      // past-anchor artefact) to keep the handoff and the sweep smooth.
+      this.filter!.frequency.setTargetAtTime(cutoff, t, 0.01);
+      this.filter!.Q.setTargetAtTime(res, t, 0.01);
+      // In STEP mode, gain is controlled by ADSR envelope (_fireStepADSR).
+      // In CONT mode glide the gain with setTargetAtTime: it approaches the target
+      // exponentially from whatever the param's CURRENT value is at `t`, so unlike
+      // a linear ramp it needs neither a `.value` read (whose JS-vs-audio-clock
+      // skew left occasional steps → intermittent zipper while dragging VOL) nor a
+      // past-anchor. Modern browsers' cancelAndHoldAtTime resolves a setTargetAtTime
+      // correctly, so the CONT→STEP fade (_fadeOutForStepSwitch) stays clean.
+      if (this.continuousMode) {
+        this.gain!.gain.setTargetAtTime(vol * this.masterVolume, t, 0.01);
+      }
     }
   }
 
@@ -652,15 +683,26 @@ class VCOLoop {
       const linearPos = stepIndex / totalSteps;
       const easedPos = vcoEase ? vcoEase.apply(linearPos) : linearPos;
       this.playheadPosition = easedPos;
-      this.applyAtPosition(easedPos);
-      this._fireStepADSR(stepIndex, totalSteps, easedPos);
+      // Reconstruct the step's real audio time from the perf-clock timestamp the
+      // sequencer scheduled it for, so pitch + envelope land on the audio grid
+      // (not 50ms early at JS wall-clock time, which truncates the prior step's
+      // envelope mid-flight and clicks).
+      const ctxNow = audioEngine.ctx!.currentTime;
+      const audioTime = (whenMs !== undefined)
+        ? ctxNow + Math.max(0, (whenMs - performance.now()) / 1000)
+        : ctxNow;
+      this.applyAtPosition(easedPos, audioTime);
+      this._fireStepADSR(stepIndex, totalSteps, easedPos, audioTime);
     }
   }
 
-  _fireStepADSR(stepIndex: number, totalSteps: number, samplePos?: number) {
+  _fireStepADSR(stepIndex: number, totalSteps: number, samplePos?: number, atTime?: number) {
     if (!this.gain || !this.isOscRunning) return;
     const ctx = audioEngine.ctx!;
-    const now = ctx.currentTime;
+    // Schedule on the step's real audio time when known. Cancelling/anchoring at
+    // the future grid time lets the previous step's envelope play out fully to
+    // its endpoint instead of being chopped off → seamless, click-free retrigger.
+    const now = (atTime !== undefined) ? atTime : ctx.currentTime;
 
     const pos = (samplePos !== undefined) ? samplePos : stepIndex / totalSteps;
     const vol = this.getValueAt('volume', pos) * this.masterVolume;
@@ -669,19 +711,36 @@ class VCOLoop {
     const bpm = (audioEngine && audioEngine.params.tempo) || 120;
     const stepDur = (60 / bpm) / 4;
 
-    // Cancel previous ramps
-    this.gain!.gain.cancelScheduledValues(now);
+    // Stop the previous step's scheduled ramps WITHOUT chopping its tail.
+    // cancelScheduledValues(now) would delete the prior step's final down-ramp
+    // (whose endpoint sits exactly at `now`), freezing the gain at the
+    // second-to-last sample (~0.19·vol) and then hard-stepping it to 0.001 here
+    // → click. cancelAndHoldAtTime lets the in-progress ramp resolve to its value
+    // at `now` and holds it, so the new envelope continues seamlessly.
+    const gp = this.gain!.gain;
+    if (typeof gp.cancelAndHoldAtTime === 'function') {
+      gp.cancelAndHoldAtTime(now);
+    } else {
+      gp.cancelScheduledValues(now);
+    }
 
-    // Sample the ADSR curve at multiple points and schedule gain
+    // Sample the ADSR curve at multiple points and schedule gain.
+    // The first point is reached with a short ramp (not setValueAtTime) so that
+    // when the envelope's start value differs from the held value — e.g. a custom
+    // curve that doesn't return to 0 at its end — the transition glides instead
+    // of stepping (which clicks). `smooth` stays well under one sample interval.
     const numSamples = 16;
+    const smooth = Math.min(0.003, stepDur / 32);
     for (let i = 0; i <= numSamples; i++) {
       const t = i / numSamples; // 0-1 within step
       const envVal = this.getValueAt('adsr', t); // 0-1 envelope value
       const gainVal = Math.max(0.001, envVal * vol);
-      const time = now + t * stepDur;
       if (i === 0) {
-        this.gain!.gain.setValueAtTime(gainVal, time);
+        // Glide from the held value to the envelope start over `smooth` seconds.
+        this.gain!.gain.linearRampToValueAtTime(gainVal, now + smooth);
       } else {
+        // Compress the rest of the envelope into [now+smooth, now+stepDur].
+        const time = now + smooth + t * (stepDur - smooth);
         this.gain!.gain.linearRampToValueAtTime(gainVal, time);
       }
     }
@@ -718,6 +777,23 @@ class VCOLoop {
     this.stopContinuousLoop();
     const TICK_MS = 20;
 
+    // Entering CONT from STEP: clear the last step's pending ramps and hold the
+    // current values so the continuous control (setTargetAtTime) glides on from
+    // exactly where STEP left off — instead of pending future setValueAtTime
+    // events (gain ADSR, and filter cutoff/Q on non-flat curves) firing after the
+    // switch and fighting it / blipping. Done for gain + filter together.
+    if (audioEngine.ctx) {
+      const now = audioEngine.ctx.currentTime;
+      const hold = (p: AudioParam | undefined) => {
+        if (!p) return;
+        if (typeof p.cancelAndHoldAtTime === 'function') p.cancelAndHoldAtTime(now);
+        else p.cancelScheduledValues(now);
+      };
+      hold(this.gain?.gain);
+      hold(this.filter?.frequency);
+      hold(this.filter?.Q);
+    }
+
     this._continuousTimerId = setInterval(() => {
       if (!this.enabled || !this.isOscRunning) return;
 
@@ -743,6 +819,27 @@ class VCOLoop {
       clearInterval(this._continuousTimerId);
       this._continuousTimerId = null;
     }
+  }
+
+  // Leaving CONT for STEP while playing: the continuous gain is sitting at the
+  // CONT level. If we just let the next step's envelope grab it (via a future
+  // cancelAndHoldAtTime), the abrupt handoff from that held level clicks. Fade
+  // the gain to near-silence here, at real time, so the next step's ADSR
+  // re-gates cleanly from ~0. Called only on an actual CONT→STEP switch (NOT
+  // from startContinuousLoop's internal stopContinuousLoop()).
+  _fadeOutForStepSwitch() {
+    if (!this.gain || !audioEngine.ctx || !this.isOscRunning) return;
+    const g = this.gain.gain;
+    const now = audioEngine.ctx.currentTime;
+    // NOTE: do NOT use cancelAndHoldAtTime here. The CONT gain is driven by
+    // setTargetAtTime, and cancelAndHoldAtTime after a setTargetAtTime is buggy in
+    // Chrome — it snaps the "held" value to the setTarget's TARGET instead of the
+    // current value, which reintroduces the very click we're removing. Instead
+    // read the current value and re-anchor it explicitly, then ramp to silence.
+    const current = g.value;
+    g.cancelScheduledValues(now);
+    g.setValueAtTime(current, now);
+    g.linearRampToValueAtTime(0.0001, now + 0.015);
   }
 
   // ===== UI =====
@@ -988,6 +1085,7 @@ class VCOLoop {
             this.startContinuousLoop();
           } else {
             this.stopContinuousLoop();
+            this._fadeOutForStepSwitch();
           }
         }
       }
@@ -997,9 +1095,11 @@ class VCOLoop {
     // VCO Volume slider
     document.getElementById('vco-vol-slider')?.addEventListener('input', (e) => {
       this.masterVolume = parseInt((e.target as HTMLInputElement).value) / 100;
-      if (this.isOscRunning && this.gain) {
-        this.gain!.gain.setValueAtTime(this.masterVolume, audioEngine.ctx!.currentTime);
-      }
+      // Don't write the gain here. Both engines already re-read masterVolume
+      // continuously — CONT every 20ms tick (applyAtPosition), STEP every step
+      // (_fireStepADSR) — so updating the field is enough. A direct write while
+      // dragging would fire many times per second and fight the CONT loop's
+      // per-tick ramp on the same AudioParam, producing zipper ("ザザッ") noise.
     });
 
     document.getElementById('vco-reset-curve')?.addEventListener('click', () => {
@@ -1324,6 +1424,17 @@ class VCOLoop {
     // Pattern chaining
     if (state.chainMode) this.chainMode = state.chainMode;
     if (Array.isArray(state.chainSet)) this.chainSet = new Set(state.chainSet);
+    // Sync the STEP/CONT mode buttons to the restored mode. buildUI() hardcodes
+    // STEP as active, so without this an auto-loaded CONT session would show STEP
+    // in the UI while actually playing continuously.
+    document.querySelectorAll<HTMLElement>('.vco-mode-btn').forEach(b => {
+      b.classList.toggle('active', (b.dataset.mode === 'cont') === this.continuousMode);
+    });
+    // CONT hides the stepOnly ADSR tab; if it was the active tab, fall back.
+    if (this.continuousMode && this.curves[this.activeParam]?.stepOnly) {
+      this.activeParam = 'frequency';
+    }
+    this.buildParamTabs();
     this.drawCurve();
     this.buildPatternBankUI();
     this.buildChainUI();
