@@ -74,6 +74,13 @@ class VCOLoop {
   ctx2d: CanvasRenderingContext2D | null = null;
   draggingPoint: number | null = null;
   _resizeObserver: ResizeObserver | null = null;
+  // Throttle state for live-drawing buffer refreshes (see refreshDrawingOsc).
+  _drawRefreshLast: number = 0;
+  _drawRefreshTrailingId: ReturnType<typeof setTimeout> | null = null;
+  // Last non-empty drawing waveform. When DRAW is selected but the active slot is
+  // empty (cleared / never drawn), we keep playing this instead of dropping to a
+  // sine, so "DRAW selected" always means the drawing waveform.
+  _lastDrawWave: { waveX: number[]; waveY: number[] } | null = null;
 
   constructor() {
     // State
@@ -393,16 +400,27 @@ class VCOLoop {
     this.gain!.gain.value = 0.3;
 
     if (this.waveType === 'drawing' && drawingMode) {
-      // Drawing mode: use stereo AudioBuffer loop
+      // Resolve the waveform: prefer the active slot; if it's empty (cleared, or
+      // switched to a blank slot), hold the last non-empty drawing instead of
+      // dropping to a sine. Only when nothing has EVER been drawn do we fall back
+      // to sine, so DRAW is never silent on a fresh start.
       const slot = drawingMode.slots[drawingMode.activeSlot];
-      if (slot && slot.waveX.length > 0) {
-        const bufferLength = slot.waveX.length;
+      let waveX: number[] | null = (slot && slot.waveX.length > 0) ? slot.waveX : null;
+      let waveY: number[] | null = waveX ? slot.waveY : null;
+      if (!waveX && this._lastDrawWave) {
+        waveX = this._lastDrawWave.waveX;
+        waveY = this._lastDrawWave.waveY;
+      }
+      if (waveX && waveX.length > 0) {
+        // Drawing mode: use stereo AudioBuffer loop
+        const wy = waveY;
+        const bufferLength = waveX.length;
         const buffer = ctx.createBuffer(2, bufferLength, ctx.sampleRate);
         const lData = buffer.getChannelData(0);
         const rData = buffer.getChannelData(1);
         for (let i = 0; i < bufferLength; i++) {
-          lData[i] = slot.waveX[i] || 0;
-          rData[i] = (slot.waveY[i] !== undefined) ? slot.waveY[i] : (slot.waveX[i] || 0);
+          lData[i] = waveX[i] || 0;
+          rData[i] = (wy && wy[i] !== undefined) ? wy[i] : (waveX[i] || 0);
         }
         this.osc = ctx.createBufferSource();
         this.osc.buffer = buffer;
@@ -410,6 +428,7 @@ class VCOLoop {
         this.baseFreq = ctx.sampleRate / bufferLength;
         this.osc.playbackRate.value = 220 / this.baseFreq;
         this.isDrawingOsc = true;
+        this._lastDrawWave = { waveX, waveY: wy || waveX }; // remember for blank-slot hold
 
         // 明示的なステレオルーティング: L(waveX)→左, R(waveY)→右
         this._drawSplitter = ctx.createChannelSplitter(2);
@@ -424,7 +443,8 @@ class VCOLoop {
         this._drawPanR!.connect(this.filter!);
         this.filter!.connect(this.gain);
       } else {
-        // Fallback to sine
+        // Nothing has ever been drawn → audible sine fallback (never silent).
+        // refreshDrawingOsc upgrades this to a real drawing osc on the first stroke.
         this.osc = ctx.createOscillator();
         this.osc.type = 'sine';
         this.osc.frequency.value = 220;
@@ -489,18 +509,56 @@ class VCOLoop {
     this.osc = null;
   }
 
-  // Refresh oscillator when drawing data changes during playback
+  // Refresh oscillator when drawing data changes during playback.
   refreshDrawingOsc() {
-    if (!this.isOscRunning || !this.isDrawingOsc) return;
+    // NOTE: intentionally NOT gated on isDrawingOsc. If DRAW was selected while
+    // the active slot was empty, startOsc fell back to a sine oscillator
+    // (isDrawingOsc=false). We must still react here so that, once the user
+    // draws, we can upgrade that sine fallback to a real drawing oscillator —
+    // otherwise the VCO stays stuck on sine and "DRAW doesn't change the sound".
+    if (!this.isOscRunning) return;
     if (this.waveType !== 'drawing') return;
     // Blank slot (cleared / switched to empty) → keep the current sound playing
     // instead of dropping to the sine fallback. A new stroke refills it.
     const slot = drawingMode && drawingMode.slots[drawingMode.activeSlot];
     if (!slot || !slot.waveX || slot.waveX.length === 0) return;
-    const savedPos = this.playheadPosition;
-    this.stopOsc();
-    this.startOsc();
-    this.applyAtPosition(savedPos);
+
+    // Upgrade path: currently on the sine fallback but the slot now has data.
+    // switchDrawBuffer can't be used (it needs an existing drawing osc), so do a
+    // one-time full recreate, which builds a proper drawing oscillator now.
+    if (!this.isDrawingOsc) {
+      const savedPos = this.playheadPosition;
+      this.stopOsc();
+      this.startOsc();
+      this.applyAtPosition(savedPos);
+      return;
+    }
+
+    // Throttle to ~20Hz. Live drawing calls this on every mousemove; rebuilding
+    // the buffer that often is wasteful and each swap is a tiny click. A trailing
+    // call guarantees the final stroke is applied after the user stops moving.
+    const now = performance.now();
+    const MIN_INTERVAL = 50;
+    if (this._drawRefreshTrailingId) {
+      clearTimeout(this._drawRefreshTrailingId);
+      this._drawRefreshTrailingId = null;
+    }
+    const wait = MIN_INTERVAL - (now - this._drawRefreshLast);
+    if (wait > 0) {
+      this._drawRefreshTrailingId = setTimeout(() => {
+        this._drawRefreshTrailingId = null;
+        this.refreshDrawingOsc();
+      }, wait);
+      return;
+    }
+    this._drawRefreshLast = now;
+
+    // Swap the buffer in place — exactly one oscillator in, one out (immediately).
+    // The old stopOsc()/startOsc() teardown faded out over 0.2s and kept the old
+    // oscillator ringing ~0.25s, so live drawing stacked many overlapping
+    // oscillators → a smeared, reverb-like sound. switchDrawBuffer keeps a single
+    // gain-continuous oscillator and preserves pitch/filter/gain.
+    this.switchDrawBuffer(drawingMode.activeSlot);
   }
 
   // Switch drawing buffer to a different slot without interrupting playback
@@ -510,6 +568,8 @@ class VCOLoop {
 
     const slot = drawingMode.slots[slotIndex];
     if (!slot || slot.waveX.length === 0) return;
+    // Remember this waveform so an empty slot later holds it instead of sine.
+    this._lastDrawWave = { waveX: slot.waveX, waveY: slot.waveY };
 
     const ctx = audioEngine.ctx!;
     const bufferLength = slot.waveX.length;

@@ -432,7 +432,10 @@ class DrawingMode {
     this.updateWaveformPreview();
     this.updatePointCount();
 
-    if (vcoLoop && vcoLoop.isOscRunning && vcoLoop.isDrawingOsc) {
+    // Gate on waveType, NOT isDrawingOsc: when DRAW started on an empty slot the
+    // VCO is on the sine fallback (isDrawingOsc=false), and we still need to
+    // notify it so refreshDrawingOsc can upgrade it to a real drawing oscillator.
+    if (vcoLoop && vcoLoop.isOscRunning && vcoLoop.waveType === 'drawing') {
       vcoLoop.refreshDrawingOsc();
     }
     if (arpeggiator && arpeggiator.refreshDrawingOsc) {
