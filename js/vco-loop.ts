@@ -1597,6 +1597,11 @@ export class VCOLoopManager {
   activeIndex: number = 0;
   readonly stateKey = 'vcoLoop';
   _tabBar: HTMLElement | null = null;
+  // Clipboard for COPY/PASTE between voices (one voice's full settings, minus its
+  // live ON/OFF). Lets a customized voice be duplicated into another slot.
+  _clipboard: any = null;
+  _copyBtn: HTMLButtonElement | null = null;
+  _pasteBtn: HTMLButtonElement | null = null;
 
   constructor(count: number) {
     for (let i = 0; i < count; i++) {
@@ -1635,6 +1640,26 @@ export class VCOLoopManager {
     syncBtn.title = '全 voice の位相/レートをリセットして同期';
     syncBtn.addEventListener('click', () => this.syncAllPhases());
     tabs.appendChild(syncBtn);
+
+    // COPY / PASTE: copy the active voice's settings, paste into another tab to
+    // duplicate it. PASTE is disabled until something has been copied.
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'vco-voice-copy';
+    copyBtn.textContent = 'COPY';
+    copyBtn.title = 'このVCO LOOPの設定をコピー';
+    copyBtn.addEventListener('click', () => this.copyActiveVoice());
+    tabs.appendChild(copyBtn);
+    this._copyBtn = copyBtn;
+
+    const pasteBtn = document.createElement('button');
+    pasteBtn.className = 'vco-voice-copy';
+    pasteBtn.textContent = 'PASTE';
+    pasteBtn.title = 'コピーした設定をこの枠に貼り付け（複製）';
+    pasteBtn.disabled = true;
+    pasteBtn.addEventListener('click', () => this.pasteToActiveVoice());
+    tabs.appendChild(pasteBtn);
+    this._pasteBtn = pasteBtn;
+
     panel.appendChild(tabs);
     this._tabBar = tabs;
 
@@ -1677,6 +1702,29 @@ export class VCOLoopManager {
       t.classList.toggle('active', i === this.activeIndex);
       t.classList.toggle('on', this.voices[i].enabled);
     });
+  }
+
+  // Copy the active voice's full settings to the clipboard (excluding its live
+  // ON/OFF — pasting shouldn't flip the target's enable state).
+  copyActiveVoice() {
+    const s = this.active.getState() as any;
+    delete s.enabled;
+    this._clipboard = s;
+    if (this._pasteBtn) this._pasteBtn.disabled = false;
+    if (this._copyBtn) {
+      this._copyBtn.textContent = 'COPIED';
+      setTimeout(() => { if (this._copyBtn) this._copyBtn.textContent = 'COPY'; }, 700);
+    }
+  }
+
+  // Paste the clipboard into the active voice (duplicate). Repeatable across tabs.
+  pasteToActiveVoice() {
+    if (!this._clipboard) return;
+    this.active.setState(this._clipboard); // setState rebuilds curves/pattern bank fresh
+    this.active.syncCanvasSize();
+    this.active.drawCurve();
+    this.updateTabBar();
+    emit('state:changed');
   }
 
   // Reset every voice's phase offset + rate so they realign to the bar.

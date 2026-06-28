@@ -2062,6 +2062,21 @@ body.resizing-row {
 }
 .vco-voice-sync:hover { color: var(--accent-cyan); border-color: var(--accent-cyan); }
 
+.vco-voice-copy {
+  padding: 3px 10px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: bold;
+  background: var(--btn-surface);
+  border: 1px solid var(--border-panel);
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: 4px;
+  align-self: center;
+}
+.vco-voice-copy:hover:not(:disabled) { color: var(--accent-cyan); border-color: var(--accent-cyan); }
+.vco-voice-copy:disabled { opacity: 0.4; cursor: not-allowed; }
+
 /* PHASE / RATE per-voice timing controls */
 .vco-timing-row {
   display: flex;
