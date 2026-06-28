@@ -43,21 +43,17 @@ class VCOLoop {
   playheadPosition: number;
   animationFrameId: number | null;
   _continuousTimerId: ReturnType<typeof setInterval> | null;
-  // The live oscillator phase below is shared via the dependency-free
-  // `transport` module so vco-ease can read it without importing vco-loop
-  // (breaks the vco-loop ⇄ vco-ease cycle).
-  get isOscRunning(): boolean { return transport.vcoRunning; }
-  set isOscRunning(v: boolean) { transport.vcoRunning = v; }
-  get continuousMode(): boolean { return transport.vcoContinuous; }
-  set continuousMode(v: boolean) { transport.vcoContinuous = v; }
-  get stepStartTime(): number { return transport.vcoStepStartTime; }
-  set stepStartTime(v: number) { transport.vcoStepStartTime = v; }
-  get stepDuration(): number { return transport.vcoStepDuration; }
-  set stepDuration(v: number) { transport.vcoStepDuration = v; }
-  get lastStepIndex(): number { return transport.vcoStepIndex; }
-  set lastStepIndex(v: number) { transport.vcoStepIndex = v; }
-  get lastTotalSteps(): number { return transport.vcoTotalSteps; }
-  set lastTotalSteps(v: number) { transport.vcoTotalSteps = v; }
+  // Per-voice live oscillator phase. These used to be backed by the shared
+  // `transport` module (single VCO), but with multiple independent voices each
+  // needs its own state — otherwise voices clobber each other's running/phase
+  // flags. The VCOLoopManager mirrors the ACTIVE voice's phase into `transport`
+  // so vco-ease (global easing editor) can still read it without importing here.
+  isOscRunning: boolean = false;
+  continuousMode: boolean = false;
+  stepStartTime: number = 0;
+  stepDuration: number = 0;
+  lastStepIndex: number = 0;
+  lastTotalSteps: number = 16;
   activePattern: number;
   patternBank: (VCOPatternSlot | null)[];
   chainMode: string;
@@ -74,6 +70,19 @@ class VCOLoop {
   ctx2d: CanvasRenderingContext2D | null = null;
   draggingPoint: number | null = null;
   _resizeObserver: ResizeObserver | null = null;
+  // Which voice this instance is (0-based), set by VCOLoopManager. Voice 0 owns
+  // the shared editor UI in the current phase; others are audio-only for now.
+  voiceId: number = 0;
+  // This voice's editor container. All of this voice's DOM lookups are scoped to
+  // it (via _el/_all) so 4 voices can each render an independent editor without
+  // their IDs/classes colliding. Falls back to `document` if unset.
+  root: HTMLElement | null = null;
+  // Per-voice "ずらし" controls. phaseOffset (0..1) shifts where this voice sits
+  // in the loop; rate scales how fast it sweeps the curve relative to the bar
+  // (×2 = twice per bar, ×0.5 = once per two bars). Together they let the voices
+  // phase against each other. Applied in _warpPos().
+  phaseOffset: number = 0;
+  rate: number = 1;
   // Throttle state for live-drawing buffer refreshes (see refreshDrawingOsc).
   _drawRefreshLast: number = 0;
   _drawRefreshTrailingId: ReturnType<typeof setTimeout> | null = null;
@@ -141,7 +150,7 @@ class VCOLoop {
     if (this.continuousMode && this.curves[paramName].stepOnly) return;
 
     this.activeParam = paramName;
-    document.querySelectorAll<HTMLElement>('.vco-param-tab').forEach(t => {
+    this._all('.vco-param-tab').forEach(t => {
       t.classList.toggle('active', t.dataset.param === paramName);
     });
     this.drawCurve();
@@ -150,7 +159,7 @@ class VCOLoop {
   setContinuousMode(isCont: boolean) {
     if (this.continuousMode === isCont) return;
     this.continuousMode = isCont;
-    document.querySelectorAll<HTMLElement>('.vco-mode-btn').forEach(b => {
+    this._all('.vco-mode-btn').forEach(b => {
       b.classList.toggle('active', (b.dataset.mode === 'cont') === isCont);
     });
     
@@ -213,16 +222,16 @@ class VCOLoop {
     this.buildPatternBankUI();
     this.updateChainActive();
     // Update wave buttons
-    document.querySelectorAll<HTMLElement>('.vco-wave-btn').forEach(b => {
+    this._all('.vco-wave-btn').forEach(b => {
       b.classList.toggle('active', b.dataset.wave === this.waveType);
     });
-    const volSlider = document.getElementById('vco-vol-slider') as HTMLInputElement | null;
+    const volSlider = this._el('vco-vol-slider') as HTMLInputElement | null;
     if (volSlider) volSlider.value = String(Math.round(this.masterVolume * 100));
     emit('state:changed');
   }
 
   buildPatternBankUI() {
-    const panel = document.getElementById('vco-loop-panel');
+    const panel = this.root;
     if (!panel) return;
     let bankDiv = panel.querySelector('.pattern-bank');
     if (!bankDiv) {
@@ -337,7 +346,7 @@ class VCOLoop {
   }
 
   buildChainUI() {
-    const panel = document.getElementById('vco-loop-panel');
+    const panel = this.root;
     if (!panel) return;
     let bar = panel.querySelector('#vco-chain-bar');
     if (!bar) return;
@@ -370,12 +379,21 @@ class VCOLoop {
 
   // Lightweight refresh of just the "playing" highlight (avoids full rebuild).
   updateChainActive() {
-    const panel = document.getElementById('vco-loop-panel');
+    const panel = this.root;
     if (!panel) return;
     panel.querySelectorAll<HTMLElement>('.vco-chain-cell').forEach((b) => {
       const i = parseInt(b.dataset.chain ?? "0", 10);
       b.classList.toggle('playing', this.chainMode !== 'off' && i === this.activePattern && this.chainSet.has(i));
     });
+  }
+
+  // Scoped DOM helpers: look inside this voice's `root` container so the per-voice
+  // editors don't collide on shared ids/classes. Fall back to document if unset.
+  _el(id: string): HTMLElement | null {
+    return this.root ? this.root.querySelector<HTMLElement>('#' + id) : document.getElementById(id);
+  }
+  _all(sel: string): NodeListOf<HTMLElement> {
+    return (this.root ?? document).querySelectorAll<HTMLElement>(sel);
   }
 
   init() {
@@ -671,6 +689,16 @@ class VCOLoop {
     }
   }
 
+  // Map a base bar position (0..1) through this voice's rate + phase offset, wrap
+  // into 0..1, then through the (global) easing curve. This is what makes voices
+  // play the same loop shifted/at different speeds so they "ずれて" against each other.
+  _warpPos(basePos: number): number {
+    let p = basePos * this.rate + this.phaseOffset;
+    p = p % 1;
+    if (p < 0) p += 1;
+    return vcoEase ? vcoEase.apply(p) : p;
+  }
+
   // Convert normalized value (0-1) to actual parameter value
   // Uses logarithmic scaling for frequency-like parameters
   normalizedToValue(y: number, curve: VCOCurve) {
@@ -738,10 +766,9 @@ class VCOLoop {
       this.stepDuration = (60000 / bpm) / 4; // per-step duration in ms
     } else {
       // STEP mode: discrete update with ADSR envelope.
-      // Apply easing to the per-step sampled position so the modulation curve
-      // is traversed non-uniformly across steps (same easing model as CONT).
-      const linearPos = stepIndex / totalSteps;
-      const easedPos = vcoEase ? vcoEase.apply(linearPos) : linearPos;
+      // Apply rate/phase warp then easing to the per-step sampled position so the
+      // modulation curve is traversed (per voice) shifted/scaled and non-uniformly.
+      const easedPos = this._warpPos(stepIndex / totalSteps);
       this.playheadPosition = easedPos;
       // Reconstruct the step's real audio time from the perf-clock timestamp the
       // sequencer scheduled it for, so pitch + envelope land on the audio grid
@@ -865,9 +892,9 @@ class VCOLoop {
       let linearPhase = (this.lastStepIndex + stepFraction) / this.lastTotalSteps;
       if (linearPhase > 1) linearPhase = 1;
 
-      // Remap the phase through an easing curve so the loop's playback speed
-      // can accelerate/decelerate within the bar (slope of position = speed).
-      this.playheadPosition = vcoEase ? vcoEase.apply(linearPhase) : linearPhase;
+      // Apply this voice's rate/phase warp (wraps into 0..1) then the easing
+      // curve, so each voice sweeps the loop shifted / at its own speed.
+      this.playheadPosition = this._warpPos(linearPhase);
 
       this.applyAtPosition(this.playheadPosition);
       this.updatePlayhead();
@@ -905,12 +932,12 @@ class VCOLoop {
   // ===== UI =====
 
   buildUI() {
-    const container = document.getElementById('vco-loop-panel');
+    const container = this.root;
     if (!container) return;
 
     container.innerHTML = `
       <div class="panel-title">
-        VCO LOOP
+        VCO LOOP V${this.voiceId + 1}
         <div class="vco-header-controls">
           <button id="vco-toggle" class="small-btn vco-toggle-btn${this.enabled ? ' vco-on' : ''}">${this.enabled ? 'ON' : 'OFF'}</button>
           <div class="vco-mode-select">
@@ -937,6 +964,16 @@ class VCOLoop {
       <div class="vco-editor-area">
         <canvas id="vco-curve-canvas" width="600" height="160"></canvas>
         <div class="vco-playhead" id="vco-playhead"></div>
+      </div>
+      <div class="vco-timing-row">
+        <span class="label">PHASE</span>
+        <input id="vco-phase-slider" type="range" min="0" max="100" value="${Math.round(this.phaseOffset * 100)}" class="vco-vol-slider" />
+        <span id="vco-phase-val" class="vco-info">${Math.round(this.phaseOffset * 100)}%</span>
+        <span class="label">RATE</span>
+        <div class="vco-rate-select">
+          ${[0.25, 0.5, 1, 2, 4].map(r =>
+            `<button class="vco-rate-btn${r === this.rate ? ' active' : ''}" data-rate="${r}">${r === 0.25 ? '¼' : r === 0.5 ? '½' : '×' + r}</button>`).join('')}
+        </div>
       </div>
       <div class="vco-editor-controls">
         <button id="vco-reset-curve" class="small-btn">RESET</button>
@@ -998,7 +1035,7 @@ class VCOLoop {
   }
 
   buildParamTabs() {
-    const tabContainer = document.getElementById('vco-param-tabs');
+    const tabContainer = this._el('vco-param-tabs');
     if (!tabContainer) return;
     tabContainer.innerHTML = '';
 
@@ -1012,7 +1049,7 @@ class VCOLoop {
       tab.dataset.param = key;
       tab.addEventListener('click', () => {
         this.activeParam = key;
-        document.querySelectorAll('.vco-param-tab').forEach(t => t.classList.remove('active'));
+        this._all('.vco-param-tab').forEach(t => t.classList.remove('active'));
         tab.classList.add('active');
         this.drawCurve();
       });
@@ -1057,7 +1094,7 @@ class VCOLoop {
   }
 
   initCanvas() {
-    this.canvas = document.getElementById('vco-curve-canvas') as HTMLCanvasElement | null;
+    this.canvas = this._el('vco-curve-canvas') as HTMLCanvasElement | null;
     if (!this.canvas) return;
     this.ctx2d = this.canvas!.getContext('2d');
 
@@ -1097,9 +1134,9 @@ class VCOLoop {
   }
 
   bindControls() {
-    document.getElementById('vco-toggle')?.addEventListener('click', () => {
+    this._el('vco-toggle')?.addEventListener('click', () => {
       this.enabled = !this.enabled;
-      const btn = document.getElementById('vco-toggle');
+      const btn = this._el('vco-toggle');
       if (btn) {
         btn.textContent = this.enabled ? 'ON' : 'OFF';
         btn.classList.toggle('vco-on', this.enabled);
@@ -1124,10 +1161,10 @@ class VCOLoop {
     });
 
     // STEP / CONT mode toggle
-    document.addEventListener('click', (e) => {
+    (this.root ?? document).addEventListener('click', (e) => {
       const tgt = e.target as HTMLElement;
       if (tgt.classList.contains('vco-mode-btn')) {
-        document.querySelectorAll('.vco-mode-btn').forEach(b => b.classList.remove('active'));
+        this._all('.vco-mode-btn').forEach(b => b.classList.remove('active'));
         tgt.classList.add('active');
         const mode = tgt.dataset.mode;
         this.continuousMode = (mode === 'cont');
@@ -1153,7 +1190,7 @@ class VCOLoop {
 
 
     // VCO Volume slider
-    document.getElementById('vco-vol-slider')?.addEventListener('input', (e) => {
+    this._el('vco-vol-slider')?.addEventListener('input', (e) => {
       this.masterVolume = parseInt((e.target as HTMLInputElement).value) / 100;
       // Don't write the gain here. Both engines already re-read masterVolume
       // continuously — CONT every 20ms tick (applyAtPosition), STEP every step
@@ -1162,7 +1199,22 @@ class VCOLoop {
       // per-tick ramp on the same AudioParam, producing zipper ("ザザッ") noise.
     });
 
-    document.getElementById('vco-reset-curve')?.addEventListener('click', () => {
+    // PHASE offset slider (0..1) — shifts this voice within the loop.
+    this._el('vco-phase-slider')?.addEventListener('input', (e) => {
+      this.phaseOffset = parseInt((e.target as HTMLInputElement).value) / 100;
+      const lbl = this._el('vco-phase-val');
+      if (lbl) lbl.textContent = Math.round(this.phaseOffset * 100) + '%';
+    });
+
+    // RATE multiplier buttons — how fast this voice sweeps the loop vs the bar.
+    this._all('.vco-rate-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        this.rate = parseFloat(btn.dataset.rate ?? '1');
+        this._all('.vco-rate-btn').forEach(b => b.classList.toggle('active', b === btn));
+      });
+    });
+
+    this._el('vco-reset-curve')?.addEventListener('click', () => {
       const curve = this.curves[this.activeParam];
       if (this.activeParam === 'adsr') {
         // Restore default ADSR shape
@@ -1174,10 +1226,10 @@ class VCOLoop {
     });
 
     // VCO wave buttons
-    document.addEventListener('click', (e) => {
+    (this.root ?? document).addEventListener('click', (e) => {
       const tgt = e.target as HTMLElement;
       if (tgt.classList.contains('vco-wave-btn')) {
-        document.querySelectorAll('.vco-wave-btn').forEach(b => b.classList.remove('active'));
+        this._all('.vco-wave-btn').forEach(b => b.classList.remove('active'));
         tgt.classList.add('active');
         const newWave = tgt.dataset.wave;
         const oldWave = this.waveType;
@@ -1295,7 +1347,7 @@ class VCOLoop {
   }
 
   updatePlayhead() {
-    const playhead = document.getElementById('vco-playhead');
+    const playhead = this._el('vco-playhead');
     if (!playhead || !this.canvas) return;
     const pad = 8;
     const w = this.canvas!.width;
@@ -1352,7 +1404,7 @@ class VCOLoop {
     const coords = this.getCanvasCoords(e);
 
     // Show cursor info
-    const infoEl = document.getElementById('vco-cursor-info');
+    const infoEl = this._el('vco-cursor-info');
     if (infoEl) {
       const curve = this.curves[this.activeParam];
       const val = curve.min + coords.y * (curve.max - curve.min);
@@ -1459,6 +1511,9 @@ class VCOLoop {
       waveType: this.waveType,
       masterVolume: this.masterVolume,
       continuousMode: this.continuousMode || false,
+      enabled: this.enabled,
+      phaseOffset: this.phaseOffset,
+      rate: this.rate,
       curves,
       activePattern: this.activePattern,
       patternBank: this.patternBank.map(p => p ? JSON.parse(JSON.stringify(p)) : null),
@@ -1472,6 +1527,9 @@ class VCOLoop {
     this.waveType = state.waveType;
     this.masterVolume = state.masterVolume;
     if (state.continuousMode !== undefined) this.continuousMode = state.continuousMode;
+    if (state.enabled !== undefined) this.enabled = state.enabled;
+    if (state.phaseOffset !== undefined) this.phaseOffset = state.phaseOffset;
+    if (state.rate !== undefined) this.rate = state.rate;
     Object.entries(state.curves).forEach(([key, saved]: [string, any]) => {
       if (this.curves[key]) {
         this.curves[key].points = saved.points.map((p: any) => ({ x: p.x, y: p.y }));
@@ -1487,7 +1545,7 @@ class VCOLoop {
     // Sync the STEP/CONT mode buttons to the restored mode. buildUI() hardcodes
     // STEP as active, so without this an auto-loaded CONT session would show STEP
     // in the UI while actually playing continuously.
-    document.querySelectorAll<HTMLElement>('.vco-mode-btn').forEach(b => {
+    this._all('.vco-mode-btn').forEach(b => {
       b.classList.toggle('active', (b.dataset.mode === 'cont') === this.continuousMode);
     });
     // CONT hides the stepOnly ADSR tab; if it was the active tab, fall back.
@@ -1499,14 +1557,202 @@ class VCOLoop {
     this.buildPatternBankUI();
     this.buildChainUI();
     // Update wave button UI
-    document.querySelectorAll<HTMLElement>('.vco-wave-btn').forEach(b => {
+    this._all('.vco-wave-btn').forEach(b => {
       b.classList.toggle('active', b.dataset.wave === this.waveType);
     });
     // Update volume slider
-    const volSlider = document.getElementById('vco-vol-slider') as HTMLInputElement | null;
+    const volSlider = this._el('vco-vol-slider') as HTMLInputElement | null;
     if (volSlider) volSlider.value = String(Math.round(this.masterVolume * 100));
+    // ON/OFF toggle button
+    const toggle = this._el('vco-toggle');
+    if (toggle) {
+      toggle.textContent = this.enabled ? 'ON' : 'OFF';
+      toggle.classList.toggle('vco-on', this.enabled);
+    }
+    // PHASE slider + RATE buttons
+    const phaseSlider = this._el('vco-phase-slider') as HTMLInputElement | null;
+    if (phaseSlider) phaseSlider.value = String(Math.round(this.phaseOffset * 100));
+    const phaseVal = this._el('vco-phase-val');
+    if (phaseVal) phaseVal.textContent = Math.round(this.phaseOffset * 100) + '%';
+    this._all('.vco-rate-btn').forEach(b => {
+      b.classList.toggle('active', parseFloat(b.dataset.rate ?? '1') === this.rate);
+    });
   }
 }
 
-export const vcoLoop = new VCOLoop();
+/**
+ * Holds the (fixed 4) independent VCO LOOP voices and fans the shared
+ * step-sequencer transport out to each. Each voice has its own enable, curves,
+ * wave, pattern bank and audio chain, so they can be brought in/out and shaped
+ * independently. The rest of the app keeps calling `vcoLoop.*` exactly as before
+ * — the manager routes those to the active (UI-focused) voice, or to all voices
+ * for transport/audio events.
+ *
+ * Phase 1: voice 0 owns the existing editor UI and is enabled; voices 1–3 exist
+ * and are wired into the audio/transport fan-out but start disabled (inert).
+ * The per-voice tab UI that exposes voices 1–3 is added in the next phase.
+ */
+export class VCOLoopManager {
+  voices: VCOLoop[] = [];
+  activeIndex: number = 0;
+  readonly stateKey = 'vcoLoop';
+  _tabBar: HTMLElement | null = null;
+
+  constructor(count: number) {
+    for (let i = 0; i < count; i++) {
+      const v = new VCOLoop();
+      v.voiceId = i;
+      if (i > 0) v.enabled = false; // only voice 0 sounds until the user enables others
+      this.voices.push(v);
+    }
+  }
+
+  get active(): VCOLoop { return this.voices[this.activeIndex]; }
+
+  // ----- lifecycle / transport: fan out to every voice -----
+  init() {
+    const panel = document.getElementById('vco-loop-panel');
+    if (!panel) { this.active.init(); return; }
+    panel.innerHTML = '';
+
+    // Voice tab bar (V1..VN). Each tab selects which voice the editor below edits;
+    // the "on" class mirrors that voice's independent enable state.
+    const tabs = document.createElement('div');
+    tabs.className = 'vco-voice-tabs';
+    this.voices.forEach((_v, i) => {
+      const tab = document.createElement('button');
+      tab.className = 'vco-voice-tab';
+      tab.dataset.voice = String(i);
+      tab.textContent = 'V' + (i + 1);
+      tab.addEventListener('click', () => this.setActiveVoice(i));
+      tabs.appendChild(tab);
+    });
+    // SYNC: realign every voice (phase 0, rate ×1) so they're back in lockstep.
+    // Foundation for richer sync features later.
+    const syncBtn = document.createElement('button');
+    syncBtn.className = 'vco-voice-sync';
+    syncBtn.textContent = 'SYNC';
+    syncBtn.title = '全 voice の位相/レートをリセットして同期';
+    syncBtn.addEventListener('click', () => this.syncAllPhases());
+    tabs.appendChild(syncBtn);
+    panel.appendChild(tabs);
+    this._tabBar = tabs;
+
+    // One editor container per voice; only the active one is shown.
+    this.voices.forEach((v, i) => {
+      const c = document.createElement('div');
+      c.className = 'vco-voice-container';
+      c.style.display = i === this.activeIndex ? '' : 'none';
+      panel.appendChild(c);
+      v.root = c;
+      v.init();
+    });
+
+    // Keep the tab "on" indicators in sync when a voice's ON/OFF is toggled (the
+    // toggle handler lives on the voice; its click bubbles up to the panel).
+    panel.addEventListener('click', (e) => {
+      if ((e.target as HTMLElement).closest('.vco-toggle-btn')) this.updateTabBar();
+    });
+
+    this.updateTabBar();
+  }
+
+  setActiveVoice(index: number) {
+    if (index < 0 || index >= this.voices.length || index === this.activeIndex) return;
+    this.activeIndex = index;
+    this.voices.forEach((v, i) => {
+      if (v.root) v.root.style.display = i === index ? '' : 'none';
+    });
+    // The now-visible canvas had zero size while display:none — re-measure & redraw.
+    this.active.syncCanvasSize();
+    this.active.drawCurve();
+    this.active.updatePlayhead();
+    this.updateTabBar();
+    this._syncTransport(); // easing editor follows the focused voice
+  }
+
+  updateTabBar() {
+    if (!this._tabBar) return;
+    this._tabBar.querySelectorAll<HTMLElement>('.vco-voice-tab').forEach((t, i) => {
+      t.classList.toggle('active', i === this.activeIndex);
+      t.classList.toggle('on', this.voices[i].enabled);
+    });
+  }
+
+  // Reset every voice's phase offset + rate so they realign to the bar.
+  syncAllPhases() {
+    this.voices.forEach(v => {
+      v.phaseOffset = 0;
+      v.rate = 1;
+      const ps = v._el('vco-phase-slider') as HTMLInputElement | null;
+      if (ps) ps.value = '0';
+      const pv = v._el('vco-phase-val');
+      if (pv) pv.textContent = '0%';
+      v._all('.vco-rate-btn').forEach(b => b.classList.toggle('active', parseFloat(b.dataset.rate ?? '1') === 1));
+    });
+  }
+  onPlayStart() { this.voices.forEach(v => v.onPlayStart()); this._syncTransport(); }
+  onPlayStop() { this.voices.forEach(v => v.onPlayStop()); this._syncTransport(); }
+  onStepTick(stepIndex: number, totalSteps: number, whenMs?: number) {
+    this.voices.forEach(v => v.onStepTick(stepIndex, totalSteps, whenMs));
+    this._syncTransport();
+  }
+
+  // Mirror the ACTIVE voice's live phase into the shared `transport` so vco-ease
+  // (the global easing editor) keeps reading a single source as before.
+  _syncTransport() {
+    const a = this.active;
+    transport.vcoRunning = a.isOscRunning;
+    transport.vcoContinuous = a.continuousMode;
+    transport.vcoStepStartTime = a.stepStartTime;
+    transport.vcoStepDuration = a.stepDuration;
+    transport.vcoStepIndex = a.lastStepIndex;
+    transport.vcoTotalSteps = a.lastTotalSteps;
+  }
+  // Drawing edits affect any voice currently using that drawing.
+  refreshDrawingOsc() { this.voices.forEach(v => v.refreshDrawingOsc()); }
+  switchDrawBuffer(slotIndex: number) { this.voices.forEach(v => v.switchDrawBuffer(slotIndex)); }
+
+  // ----- editor / control: route to the active (focused) voice -----
+  drawCurve() { this.active.drawCurve(); }
+  switchParam(paramName: string) { this.active.switchParam(paramName); }
+  setContinuousMode(isCont: boolean) { this.active.setContinuousMode(isCont); }
+  setControlPointFromMidi(sliderIndex: number, normalizedValue: number) {
+    this.active.setControlPointFromMidi(sliderIndex, normalizedValue);
+  }
+  get masterVolume(): number { return this.active.masterVolume; }
+  set masterVolume(v: number) { this.active.masterVolume = v; }
+  get continuousMode(): boolean { return this.active.continuousMode; }
+  get activeParam(): string { return this.active.activeParam; }
+  get waveType(): string { return this.active.waveType; }
+  get isOscRunning(): boolean { return this.voices.some(v => v.isOscRunning); }
+  get isDrawingOsc(): boolean { return this.active.isDrawingOsc; }
+
+  // ----- preset state: serialize every voice (back-compat with the old single-voice format) -----
+  getState() {
+    return { voices: this.voices.map(v => v.getState()), active: this.activeIndex };
+  }
+  setState(state: any) {
+    if (!state) return;
+    if (Array.isArray(state.voices)) {
+      state.voices.forEach((s: any, i: number) => this.voices[i]?.setState(s));
+      this.activeIndex = Math.min(state.active || 0, this.voices.length - 1);
+    } else {
+      // Old single-voice preset → load into voice 0.
+      this.voices[0].setState(state);
+      this.activeIndex = 0;
+    }
+    // Reflect the restored active voice + per-voice enables in the UI.
+    this.voices.forEach((v, i) => {
+      if (v.root) v.root.style.display = i === this.activeIndex ? '' : 'none';
+    });
+    if (this._tabBar) {
+      this.active.syncCanvasSize();
+      this.active.drawCurve();
+      this.updateTabBar();
+    }
+  }
+}
+
+export const vcoLoop = new VCOLoopManager(4);
 registerSerializable(vcoLoop);

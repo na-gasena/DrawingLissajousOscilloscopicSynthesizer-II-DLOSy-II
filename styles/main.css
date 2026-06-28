@@ -2006,6 +2006,94 @@ body.resizing-row {
   font-weight: bold;
 }
 
+/* ===== VCO LOOP VOICE TABS ===== */
+.vco-voice-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 4px 4px 0;
+  margin-bottom: 2px;
+}
+.vco-voice-tab {
+  position: relative;
+  padding: 3px 12px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: bold;
+  background: var(--btn-surface);
+  border: 1px solid var(--border-panel);
+  border-bottom: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: 4px 4px 0 0;
+  transition: all 0.15s;
+}
+.vco-voice-tab:hover { color: var(--text-primary); }
+.vco-voice-tab.active {
+  background: var(--accent-cyan);
+  color: #000;
+  border-color: var(--accent-cyan);
+}
+/* Small dot in the corner when that voice is enabled (sounding). */
+.vco-voice-tab.on::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #e84545;
+  box-shadow: 0 0 4px rgba(232, 69, 69, 0.8);
+}
+.vco-voice-tab.active.on::after { background: #000; box-shadow: none; }
+.vco-voice-container { width: 100%; }
+.vco-voice-sync {
+  margin-left: auto;
+  padding: 3px 10px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: bold;
+  background: var(--btn-surface);
+  border: 1px solid var(--border-panel);
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: 4px;
+  align-self: center;
+}
+.vco-voice-sync:hover { color: var(--accent-cyan); border-color: var(--accent-cyan); }
+
+/* PHASE / RATE per-voice timing controls */
+.vco-timing-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  flex-wrap: wrap;
+}
+.vco-timing-row .label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-secondary);
+}
+.vco-timing-row #vco-phase-slider { width: 90px; }
+.vco-rate-select { display: flex; gap: 2px; }
+.vco-rate-btn {
+  padding: 2px 7px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  background: var(--btn-surface);
+  border: 1px solid var(--border-panel);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.vco-rate-btn.active {
+  background: var(--accent-cyan);
+  color: #000;
+  border-color: var(--accent-cyan);
+  font-weight: bold;
+}
+
 /* ===== EFFECTS PANEL ===== */
 #panel-effects {
   display: flex;
