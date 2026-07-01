@@ -20,6 +20,15 @@ interface DrawSlot {
   points: DrawPoint[];
   waveX: number[];
   waveY: number[];
+  // Scan-speed profile φ:[0,1]→[0,1]. Maps even output-sample fraction → position
+  // along the drawn path (arc length). Default (absent) = linear (constant speed).
+  // A non-linear curve re-times the traversal of the path → reshapes the L/R
+  // waveform = timbre, while leaving the XY (Lissajous) shape unchanged.
+  scanProfile?: DrawPoint[];
+  // Intra-cycle sine ripple on the scan position (PM-like). rate = cycles per
+  // waveform period (0 = off), depth = amount (0..~1). Strong values fold.
+  scanRippleRate?: number;
+  scanRippleDepth?: number;
 }
 
 interface DrawPatternSlot {
@@ -44,6 +53,11 @@ class DrawingMode {
   previewGain: GainNode | null;
   isPreviewPlaying: boolean;
   waveResolution: number;
+  // Scan-speed profile editor (per active slot)
+  _scanCanvas: HTMLCanvasElement | null = null;
+  _scanCtx: CanvasRenderingContext2D | null = null;
+  _scanDragIdx: number | null = null;
+  _previewRO: ResizeObserver | null = null;
 
   constructor() {
     // Drawing slots (16 slots, display toggled between 8/16)
@@ -85,6 +99,20 @@ class DrawingMode {
     this.buildUI();
     this.bindControls();
     this.buildPatternBankUI();
+    // Keep the preview/scan canvases crisp. They are CSS-stretched (width:100%),
+    // so their backing store must track the real display size × DPR. A
+    // ResizeObserver fires once the layout is actually computed (covering the
+    // case where buildUI ran before the panel had a measurable size → the canvas
+    // was stuck at its fallback 256px backing = blurry) and on every later resize.
+    const wrap = document.querySelector('.draw-waveform-preview');
+    if (wrap && window.ResizeObserver) {
+      this._previewRO?.disconnect();
+      this._previewRO = new ResizeObserver(() => {
+        this.updateWaveformPreview();
+        this.drawScanCurve();
+      });
+      this._previewRO.observe(wrap);
+    }
   }
 
   // ===== UI =====
@@ -122,6 +150,25 @@ class DrawingMode {
           <canvas id="draw-wave-l" width="256" height="48"></canvas>
           <div class="draw-wave-label">R (Y)</div>
           <canvas id="draw-wave-r" width="256" height="48"></canvas>
+          <div class="draw-wave-label">SCAN SPEED <span class="draw-scan-hint">走査速度</span></div>
+          <canvas id="draw-scan-canvas" width="256" height="56"></canvas>
+          <div class="draw-scan-presets">
+            <button class="draw-scan-preset" data-scan="linear" title="一定速度（既定）">━</button>
+            <button class="draw-scan-preset" data-scan="easeIn" title="後半が速い">⌣</button>
+            <button class="draw-scan-preset" data-scan="easeOut" title="前半が速い">⌢</button>
+            <button class="draw-scan-preset" data-scan="sCurve" title="S字（中央が速い）">∿</button>
+            <button class="draw-scan-preset" data-scan="step" title="折れ（前半遅→後半速）">⌐</button>
+            <button id="draw-scan-reset" class="small-btn" title="プロファイル/PMをリセット">RESET</button>
+          </div>
+          <div class="draw-scan-ripple">
+            <span class="draw-scan-pm-label" title="サイクル内の正弦波で走査位置を変調（位相変調）。強いと折り返す">PM</span>
+            <span class="draw-scan-sub">rate</span>
+            <input id="draw-scan-rate" type="range" min="0" max="16" step="1" value="0">
+            <span id="draw-scan-rate-val" class="draw-scan-num">0</span>
+            <span class="draw-scan-sub">depth</span>
+            <input id="draw-scan-depth" type="range" min="0" max="100" value="0">
+            <span id="draw-scan-depth-val" class="draw-scan-num">0%</span>
+          </div>
         </div>
       </div>
       <div class="draw-info-bar">
@@ -132,6 +179,8 @@ class DrawingMode {
 
     this.buildSlotTabs();
     this.initCanvas();
+    this.initScanCanvas();
+    this.updateWaveformPreview(); // crisp initial L/R render (fits canvas to display)
   }
 
   buildSlotTabs() {
@@ -167,7 +216,9 @@ class DrawingMode {
     
     this.redrawCanvas();
     this.updateWaveformPreview();
-    
+    this.drawScanCurve(); // show this slot's scan profile
+    this._syncRippleUI();
+
     // Switch VCO Loop audio buffer if running in drawing mode
     if (vcoLoop && vcoLoop.isOscRunning && vcoLoop.isDrawingOsc) {
       vcoLoop.switchDrawBuffer(this.activeSlot);
@@ -200,6 +251,9 @@ class DrawingMode {
         points: slot.points.map(p => ({ x: p.x, y: p.y })),
         waveX: [...slot.waveX],
         waveY: [...slot.waveY],
+        scanProfile: ((slot as any).scanProfile ?? this._defaultScanProfile()).map((p: any) => ({ x: p.x, y: p.y })),
+        scanRippleRate: (slot as any).scanRippleRate || 0,
+        scanRippleDepth: (slot as any).scanRippleDepth || 0,
       }));
     } else {
       // Re-initialize to default blank slots
@@ -214,6 +268,8 @@ class DrawingMode {
     this.buildSlotTabs();
     this.redrawCanvas();
     this.updateWaveformPreview();
+    this.drawScanCurve();
+    this._syncRippleUI();
     this.buildPatternBankUI();
 
     // Update slot count buttons
@@ -268,6 +324,32 @@ class DrawingMode {
   }
 
   bindControls() {
+    // Scan-speed profile preset + reset buttons
+    document.querySelectorAll<HTMLElement>('.draw-scan-preset').forEach(btn => {
+      btn.addEventListener('click', () => this.setScanPreset(btn.dataset.scan ?? 'linear'));
+    });
+    document.getElementById('draw-scan-reset')?.addEventListener('click', () => {
+      const slot = this.slots[this.activeSlot];
+      slot.scanRippleRate = 0;
+      slot.scanRippleDepth = 0;
+      this._syncRippleUI();
+      this.setScanPreset('linear');
+    });
+
+    // PM (intra-cycle ripple) rate / depth
+    document.getElementById('draw-scan-rate')?.addEventListener('input', (e) => {
+      this.slots[this.activeSlot].scanRippleRate = parseInt((e.target as HTMLInputElement).value, 10);
+      const lbl = document.getElementById('draw-scan-rate-val');
+      if (lbl) lbl.textContent = String(this.slots[this.activeSlot].scanRippleRate);
+      this._applyScanChange();
+    });
+    document.getElementById('draw-scan-depth')?.addEventListener('input', (e) => {
+      this.slots[this.activeSlot].scanRippleDepth = parseInt((e.target as HTMLInputElement).value, 10) / 100;
+      const lbl = document.getElementById('draw-scan-depth-val');
+      if (lbl) lbl.textContent = Math.round((this.slots[this.activeSlot].scanRippleDepth || 0) * 100) + '%';
+      this._applyScanChange();
+    });
+
     // Tool selection
     document.getElementById('draw-tool-draw')?.addEventListener('click', (e) => {
       this.setToolMode('draw');
@@ -717,35 +799,242 @@ class DrawingMode {
       return;
     }
 
-    // Walk along the path and sample at even intervals
-    let accumulated = 0;
-    let ptIdx = 1;
+    // Cumulative arc length at each point (cum[k] = distance start→point k).
+    // Enables an O(log N) lookup at an ARBITRARY distance, so the scan position
+    // may move BACKWARD (folding) without breaking — vs the old forward-only walk.
+    const cum = new Float64Array(pts.length);
+    for (let k = 1; k < pts.length; k++) cum[k] = cum[k - 1] + segLengths[k - 1];
+
+    // Scan position φ(i/res) ∈ [0,1] along arc length, including the per-slot
+    // profile curve + an optional intra-cycle sine ripple (PM-like).
+    const scan = slot.scanProfile;
+    const rate = slot.scanRippleRate || 0;
+    const depth = slot.scanRippleDepth || 0;
 
     for (let i = 0; i < res; i++) {
-      const targetDist = (i / res) * totalLen;
-
-      while (ptIdx < pts.length && accumulated + segLengths[ptIdx - 1] < targetDist) {
-        accumulated += segLengths[ptIdx - 1];
-        ptIdx++;
-      }
-
-      if (ptIdx >= pts.length) ptIdx = pts.length - 1;
-
-      const segLen = segLengths[ptIdx - 1] || 0.001;
-      const localT = segLen > 0 ? (targetDist - accumulated) / segLen : 0;
-      const p0 = pts[ptIdx - 1];
-      const p1 = pts[ptIdx];
-
-      const x = p0.x + (p1.x - p0.x) * Math.max(0, Math.min(1, localT));
-      const y = p0.y + (p1.y - p0.y) * Math.max(0, Math.min(1, localT));
-
+      const u = this._warpScan(i / res, scan, rate, depth); // 0..1 (may fold)
+      const p = this._pathAtDist(pts, cum, u * totalLen);
       // Normalize to -1..1
-      waveX[i] = (x / s) * 2 - 1;
-      waveY[i] = -((y / s) * 2 - 1); // Invert Y (canvas Y is top-down)
+      waveX[i] = (p.x / s) * 2 - 1;
+      waveY[i] = -((p.y / s) * 2 - 1); // Invert Y (canvas Y is top-down)
     }
 
     slot.waveX = Array.from(waveX);
     slot.waveY = Array.from(waveY);
+  }
+
+  // ===== SCAN-SPEED PROFILE =====
+
+  // Default profile = linear (constant scan speed = current/legacy behaviour).
+  _defaultScanProfile(): DrawPoint[] {
+    return [{ x: 0, y: 0 }, { x: 1, y: 1 }];
+  }
+
+  // The active slot's profile, lazily initialised to linear when first edited.
+  _activeScanProfile(): DrawPoint[] {
+    const slot = this.slots[this.activeSlot];
+    if (!slot.scanProfile || slot.scanProfile.length < 2) {
+      slot.scanProfile = this._defaultScanProfile();
+    }
+    return slot.scanProfile;
+  }
+
+  // Evaluate the scan position φ(t) ∈ [0,1]:
+  //   base = piecewise-linear over the profile points (absent → linear identity)
+  //   + sine ripple depth·sin(2π·rate·t)  (intra-cycle phase modulation)
+  // The result may be non-monotonic (the sum can move backward) → folding scan.
+  _warpScan(t: number, profile?: DrawPoint[], rate = 0, depth = 0): number {
+    let base = t;
+    if (profile && profile.length >= 2) {
+      let left = profile[0];
+      let right = profile[profile.length - 1];
+      for (let i = 0; i < profile.length - 1; i++) {
+        if (t >= profile[i].x && t <= profile[i + 1].x) {
+          left = profile[i];
+          right = profile[i + 1];
+          break;
+        }
+      }
+      const range = right.x - left.x;
+      const lt = range > 0 ? (t - left.x) / range : 0;
+      base = left.y + (right.y - left.y) * lt;
+    }
+    if (depth > 0 && rate > 0) {
+      base += depth * Math.sin(2 * Math.PI * rate * t);
+    }
+    return Math.max(0, Math.min(1, base));
+  }
+
+  // Point on the path at an arbitrary arc-length distance (clamped). Binary
+  // search over the cumulative-length array, so distance may move backward.
+  _pathAtDist(pts: DrawPoint[], cum: Float64Array, dist: number): DrawPoint {
+    const total = cum[cum.length - 1];
+    const d = Math.max(0, Math.min(total, dist));
+    // smallest k (>=1) with cum[k] >= d → segment pts[k-1]..pts[k]
+    let lo = 1, hi = pts.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (cum[mid] >= d) hi = mid; else lo = mid + 1;
+    }
+    const k = lo;
+    const segLen = cum[k] - cum[k - 1];
+    const localT = segLen > 1e-9 ? (d - cum[k - 1]) / segLen : 0;
+    const p0 = pts[k - 1], p1 = pts[k];
+    return { x: p0.x + (p1.x - p0.x) * localT, y: p0.y + (p1.y - p0.y) * localT };
+  }
+
+  // Reflect the active slot's PM rate/depth into the sliders + labels.
+  _syncRippleUI() {
+    const slot = this.slots[this.activeSlot];
+    const rate = slot.scanRippleRate || 0;
+    const depth = Math.round((slot.scanRippleDepth || 0) * 100);
+    const rs = document.getElementById('draw-scan-rate') as HTMLInputElement | null;
+    if (rs) rs.value = String(rate);
+    const rv = document.getElementById('draw-scan-rate-val');
+    if (rv) rv.textContent = String(rate);
+    const ds = document.getElementById('draw-scan-depth') as HTMLInputElement | null;
+    if (ds) ds.value = String(depth);
+    const dv = document.getElementById('draw-scan-depth-val');
+    if (dv) dv.textContent = depth + '%';
+  }
+
+  // Re-bake + propagate after the active slot's scan profile changes.
+  _applyScanChange() {
+    this.drawScanCurve();
+    this.convertToWaveform();
+    this.updateWaveformPreview();
+    if (vcoLoop) vcoLoop.refreshDrawingOsc();
+    if (arpeggiator) arpeggiator.refreshDrawingOsc();
+    emit('state:changed');
+  }
+
+  setScanPreset(name: string) {
+    const presets: Record<string, DrawPoint[]> = {
+      linear:  [{ x: 0, y: 0 }, { x: 1, y: 1 }],
+      easeIn:  [{ x: 0, y: 0 }, { x: 0.5, y: 0.18 }, { x: 1, y: 1 }],
+      easeOut: [{ x: 0, y: 0 }, { x: 0.5, y: 0.82 }, { x: 1, y: 1 }],
+      sCurve:  [{ x: 0, y: 0 }, { x: 0.25, y: 0.06 }, { x: 0.5, y: 0.5 }, { x: 0.75, y: 0.94 }, { x: 1, y: 1 }],
+      step:    [{ x: 0, y: 0 }, { x: 0.5, y: 0.04 }, { x: 0.5, y: 0.96 }, { x: 1, y: 1 }],
+    };
+    const p = presets[name];
+    if (!p) return;
+    this.slots[this.activeSlot].scanProfile = p.map(pt => ({ x: pt.x, y: pt.y }));
+    this._applyScanChange();
+  }
+
+  // ===== SCAN-SPEED PROFILE CANVAS EDITOR =====
+
+  initScanCanvas() {
+    const canvas = document.getElementById('draw-scan-canvas') as HTMLCanvasElement | null;
+    if (!canvas) return;
+    this._scanCanvas = canvas;
+    this._scanCtx = canvas.getContext('2d');
+    this._scanDragIdx = null;
+    canvas.addEventListener('mousedown', (e) => this._scanMouseDown(e));
+    canvas.addEventListener('mousemove', (e) => this._scanMouseMove(e));
+    canvas.addEventListener('mouseup', () => { this._scanDragIdx = null; });
+    canvas.addEventListener('mouseleave', () => { this._scanDragIdx = null; });
+    canvas.addEventListener('dblclick', (e) => this._scanDblClick(e));
+    this.drawScanCurve();
+    this._syncRippleUI();
+  }
+
+  _scanCoords(e: MouseEvent) {
+    const rect = this._scanCanvas!.getBoundingClientRect();
+    const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const y = Math.max(0, Math.min(1, 1 - (e.clientY - rect.top) / rect.height));
+    return { x, y };
+  }
+
+  drawScanCurve() {
+    const canvas = this._scanCanvas;
+    const ctx = this._scanCtx;
+    if (!canvas || !ctx) return;
+    const { w, h } = this._fitCanvas(canvas, ctx);
+    const slot = this.slots[this.activeSlot];
+    const prof = slot.scanProfile || this._defaultScanProfile();
+    const rate = slot.scanRippleRate || 0;
+    const depth = slot.scanRippleDepth || 0;
+
+    ctx.fillStyle = '#1c1c20';
+    ctx.fillRect(0, 0, w, h);
+    // Grid
+    ctx.strokeStyle = '#2a2a32';
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 4; i++) {
+      const gx = (i / 4) * w, gy = (i / 4) * h;
+      ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, h); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(w, gy); ctx.stroke();
+    }
+    // Reference linear (faint)
+    ctx.strokeStyle = '#3a3a44';
+    ctx.beginPath(); ctx.moveTo(0, h); ctx.lineTo(w, 0); ctx.stroke();
+
+    // Effective scan curve (profile + ripple). This is the actual φ(t) used.
+    ctx.strokeStyle = '#00e5ff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let px = 0; px <= w; px++) {
+      const v = this._warpScan(px / w, prof, rate, depth);
+      const y = h - v * h;
+      if (px === 0) ctx.moveTo(px, y); else ctx.lineTo(px, y);
+    }
+    ctx.stroke();
+    // Points
+    prof.forEach(pt => {
+      ctx.fillStyle = '#f5a623';
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(pt.x * w, h - pt.y * h, 4, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
+    });
+  }
+
+  _scanFindPoint(coords: DrawPoint, prof: DrawPoint[]): number {
+    for (let i = 0; i < prof.length; i++) {
+      const dx = prof[i].x - coords.x;
+      const dy = prof[i].y - coords.y;
+      if (Math.sqrt(dx * dx + dy * dy) < 0.06) return i;
+    }
+    return -1;
+  }
+
+  _scanMouseDown(e: MouseEvent) {
+    const prof = this._activeScanProfile();
+    const c = this._scanCoords(e);
+    const idx = this._scanFindPoint(c, prof);
+    if (idx >= 0) {
+      this._scanDragIdx = idx;
+    } else {
+      prof.push({ x: c.x, y: c.y });
+      prof.sort((a, b) => a.x - b.x);
+      this._scanDragIdx = prof.findIndex(p => p.x === c.x && p.y === c.y);
+      this._applyScanChange();
+    }
+  }
+
+  _scanMouseMove(e: MouseEvent) {
+    if (this._scanDragIdx === null) return;
+    const prof = this._activeScanProfile();
+    const c = this._scanCoords(e);
+    const pt = prof[this._scanDragIdx];
+    if (!pt) return;
+    // Lock the endpoints' x (they must span the full path 0..1).
+    if (this._scanDragIdx === 0) { pt.x = 0; pt.y = c.y; }
+    else if (this._scanDragIdx === prof.length - 1) { pt.x = 1; pt.y = c.y; }
+    else { pt.x = c.x; pt.y = c.y; }
+    this._applyScanChange();
+  }
+
+  _scanDblClick(e: MouseEvent) {
+    const prof = this._activeScanProfile();
+    const c = this._scanCoords(e);
+    const idx = this._scanFindPoint(c, prof);
+    if (idx > 0 && idx < prof.length - 1) {
+      prof.splice(idx, 1);
+      this._applyScanChange();
+    }
   }
 
   // ===== WAVEFORM PREVIEW DISPLAY =====
@@ -756,13 +1045,32 @@ class DrawingMode {
     this.drawWaveCanvas('draw-wave-r', slot.waveY, '#e84545');
   }
 
+  // Match a canvas's backing-store resolution to its CSS display size × DPR, and
+  // scale the context so 1 unit = 1 CSS px. Without this these canvases keep their
+  // fixed 256px backing store but are stretched to 100% width → blurry ("ガビガビ").
+  // Returns the CSS-pixel size to draw with. Falls back to the attribute size when
+  // the element isn't laid out yet (0×0).
+  _fitCanvas(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D): { w: number; h: number } {
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    const cssW = Math.round(rect.width) || canvas.width;
+    const cssH = Math.round(rect.height) || canvas.height;
+    const needW = Math.max(1, Math.round(cssW * dpr));
+    const needH = Math.max(1, Math.round(cssH * dpr));
+    if (canvas.width !== needW || canvas.height !== needH) {
+      canvas.width = needW;
+      canvas.height = needH;
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // draw in CSS-pixel coordinates
+    return { w: cssW, h: cssH };
+  }
+
   drawWaveCanvas(canvasId: string, waveData: number[], color: string) {
     const canvas = document.getElementById(canvasId) as HTMLCanvasElement | null;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    const w = canvas.width;
-    const h = canvas.height;
+    const { w, h } = this._fitCanvas(canvas, ctx);
 
     ctx.fillStyle = '#1c1c20';
     ctx.fillRect(0, 0, w, h);
@@ -925,6 +1233,9 @@ class DrawingMode {
         points: slot.points.map(p => ({ x: p.x, y: p.y })),
         waveX: [...slot.waveX],
         waveY: [...slot.waveY],
+        scanProfile: (slot.scanProfile ?? this._defaultScanProfile()).map(p => ({ x: p.x, y: p.y })),
+        scanRippleRate: slot.scanRippleRate || 0,
+        scanRippleDepth: slot.scanRippleDepth || 0,
       })),
       activePattern: this.activePattern,
       patternBank: this.patternBank.map(p => p ? {
@@ -934,6 +1245,9 @@ class DrawingMode {
           points: slot.points.map((pt: any) => ({ x: pt.x, y: pt.y })),
           waveX: [...slot.waveX],
           waveY: [...slot.waveY],
+          scanProfile: (slot.scanProfile ?? this._defaultScanProfile()).map((p: any) => ({ x: p.x, y: p.y })),
+          scanRippleRate: slot.scanRippleRate || 0,
+          scanRippleDepth: slot.scanRippleDepth || 0,
         }))
       } : null),
     };
@@ -950,6 +1264,11 @@ class DrawingMode {
         this.slots[i].points = saved.points.map((p: any) => ({ x: p.x, y: p.y }));
         this.slots[i].waveX = [...saved.waveX];
         this.slots[i].waveY = [...saved.waveY];
+        this.slots[i].scanProfile = Array.isArray(saved.scanProfile) && saved.scanProfile.length >= 2
+          ? saved.scanProfile.map((p: any) => ({ x: p.x, y: p.y }))
+          : this._defaultScanProfile();
+        this.slots[i].scanRippleRate = saved.scanRippleRate || 0;
+        this.slots[i].scanRippleDepth = saved.scanRippleDepth || 0;
       }
     });
     // 2. Load pattern bank
@@ -964,6 +1283,11 @@ class DrawingMode {
             points: slot.points.map((pt: any) => ({ x: pt.x, y: pt.y })),
             waveX: [...slot.waveX],
             waveY: [...slot.waveY],
+            scanProfile: Array.isArray(slot.scanProfile) && slot.scanProfile.length >= 2
+              ? slot.scanProfile.map((pt: any) => ({ x: pt.x, y: pt.y }))
+              : this._defaultScanProfile(),
+            scanRippleRate: slot.scanRippleRate || 0,
+            scanRippleDepth: slot.scanRippleDepth || 0,
           }))
         };
       });
@@ -975,6 +1299,8 @@ class DrawingMode {
     this.buildSlotTabs();
     this.redrawCanvas();
     this.updateWaveformPreview();
+    this.drawScanCurve();
+    this._syncRippleUI();
     this.buildPatternBankUI();
   }
 }

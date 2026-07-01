@@ -1572,6 +1572,63 @@ body {
   margin-bottom: 6px;
 }
 
+/* Scan-speed profile editor (in the waveform preview column) */
+#draw-scan-canvas {
+  height: 56px !important;
+  cursor: crosshair;
+}
+.draw-scan-hint {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  color: var(--text-secondary);
+  letter-spacing: 0;
+}
+.draw-scan-presets {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.draw-scan-preset {
+  padding: 2px 7px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1;
+  background: var(--btn-surface);
+  border: 1px solid var(--border-panel);
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: 3px;
+  transition: all 0.15s;
+}
+.draw-scan-preset:hover { color: var(--accent-cyan); border-color: var(--accent-cyan); }
+
+.draw-scan-ripple {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+.draw-scan-pm-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: bold;
+  color: var(--accent-cyan);
+}
+.draw-scan-sub {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  color: var(--text-secondary);
+}
+.draw-scan-ripple input[type="range"] { width: 56px; }
+.draw-scan-num {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  color: var(--text-label);
+  min-width: 24px;
+}
+
 .draw-info-bar {
   display: flex;
   gap: 12px;
